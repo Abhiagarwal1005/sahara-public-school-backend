@@ -1,0 +1,314 @@
+// ---------------------------------------------------------------------------
+// The safety net for the denormalised balances.
+//
+// The whole system is fast because outstanding balances and monthly totals
+// are maintained in fields rather than aggregated. The price is that if a
+// write path forgets to update them, the number goes quietly wrong and
+// nobody notices for months.
+//
+// This script rebuilds every balance from its SOURCE data and reports the
+// difference. Ideally it always prints "no drift".
+//
+//   node scripts/recomputeBalances.js          -> report only (safe)
+//   node scripts/recomputeBalances.js --fix    -> repair as well
+//
+// Run it after a deploy, after any incident, and once a month.
+// ---------------------------------------------------------------------------
+
+require('dotenv').config();
+const mongoose = require('mongoose');
+
+const Student = require('../server/src/models/student.model');
+const FeeDemand = require('../server/src/models/feeDemand.model');
+const StockSale = require('../server/src/models/stockSale.model');
+const Vendor = require('../server/src/models/vendor.model');
+const Purchase = require('../server/src/models/purchase.model');
+const StockItem = require('../server/src/models/stockItem.model');
+const StockMovement = require('../server/src/models/stockMovement.model');
+const Transaction = require('../server/src/models/transaction.model');
+const MonthlyRollup = require('../server/src/models/monthlyRollup.model');
+const AcademicSession = require('../server/src/models/academicSession.model');
+const { ROLLUP_MAP } = require('../server/src/services/ledger.service');
+
+const round2 = (n) => Math.round((Number(n) + Number.EPSILON) * 100) / 100;
+const FIX = process.argv.includes('--fix');
+
+let driftCount = 0;
+
+const report = (label, id, stored, actual) => {
+    if (round2(stored) === round2(actual)) return false;
+    driftCount += 1;
+    console.log(`  DRIFT  ${label} ${id}: stored ${round2(stored)} -> actual ${round2(actual)}`);
+    return true;
+};
+
+// ---- students ----
+const checkStudents = async (session) => {
+    console.log('\nStudents (feeOutstanding, stockOutstanding)');
+
+    const [students, demands, sales] = await Promise.all([
+        Student.find({ session }).select('name feeOutstanding stockOutstanding').lean(),
+        FeeDemand.aggregate([
+            { $match: { session } },
+            {
+                $group: {
+                    _id: '$student',
+                    due: { $sum: { $subtract: ['$amount', { $add: ['$discount', '$paidAmount'] }] } },
+                },
+            },
+        ]),
+        StockSale.aggregate([
+            { $match: { session, voided: false, student: { $ne: null } } },
+            { $group: { _id: '$student', due: { $sum: '$dueAmount' } } },
+        ]),
+    ]);
+
+    const feeMap = new Map(demands.map((d) => [d._id.toString(), Math.max(0, d.due)]));
+    const stockMap = new Map(sales.map((s) => [s._id.toString(), s.due]));
+
+    const ops = [];
+
+    for (const s of students) {
+        const key = s._id.toString();
+        const fee = round2(feeMap.get(key) || 0);
+        const stock = round2(stockMap.get(key) || 0);
+
+        const feeDrift = report('student.fee', s.name, s.feeOutstanding, fee);
+        const stockDrift = report('student.stock', s.name, s.stockOutstanding, stock);
+
+        if ((feeDrift || stockDrift) && FIX) {
+            ops.push({
+                updateOne: {
+                    filter: { _id: s._id },
+                    update: { $set: { feeOutstanding: fee, stockOutstanding: stock } },
+                },
+            });
+        }
+    }
+
+    if (ops.length) {
+        await Student.bulkWrite(ops, { ordered: false });
+        console.log(`  FIXED  ${ops.length} students`);
+    }
+};
+
+// ---- vendors ----
+const checkVendors = async () => {
+    console.log('\nVendors (outstanding)');
+
+    const [vendors, bills] = await Promise.all([
+        Vendor.find().select('name outstanding').lean(),
+        Purchase.aggregate([{ $group: { _id: '$vendor', due: { $sum: '$dueAmount' } } }]),
+    ]);
+
+    const dueMap = new Map(bills.map((b) => [b._id.toString(), b.due]));
+    const ops = [];
+
+    for (const v of vendors) {
+        const actual = round2(dueMap.get(v._id.toString()) || 0);
+        if (report('vendor', v.name, v.outstanding, actual) && FIX) {
+            ops.push({ updateOne: { filter: { _id: v._id }, update: { $set: { outstanding: actual } } } });
+        }
+    }
+
+    if (ops.length) {
+        await Vendor.bulkWrite(ops, { ordered: false });
+        console.log(`  FIXED  ${ops.length} vendors`);
+    }
+};
+
+// ---- stock ----
+const checkStock = async () => {
+    console.log('\nStock (currentStock)');
+
+    const [items, moves] = await Promise.all([
+        StockItem.find().select('name hasVariants currentStock variants').lean(),
+        StockMovement.aggregate([
+            { $group: { _id: { item: '$item', variant: '$variantId' }, qty: { $sum: '$qty' } } },
+        ]),
+    ]);
+
+    const moveMap = new Map(
+        moves.map((m) => [`${m._id.item}:${m._id.variant || 'base'}`, m.qty])
+    );
+
+    const ops = [];
+
+    for (const item of items) {
+        if (item.hasVariants) {
+            for (const v of item.variants) {
+                const actual = moveMap.get(`${item._id}:${v._id}`) || 0;
+                if (report('stock', `${item.name} / ${v.label}`, v.currentStock, actual) && FIX) {
+                    ops.push({
+                        updateOne: {
+                            filter: { _id: item._id },
+                            update: { $set: { 'variants.$[v].currentStock': actual } },
+                            arrayFilters: [{ 'v._id': v._id }],
+                        },
+                    });
+                }
+            }
+        } else {
+            const actual = moveMap.get(`${item._id}:base`) || 0;
+            if (report('stock', item.name, item.currentStock, actual) && FIX) {
+                ops.push({
+                    updateOne: { filter: { _id: item._id }, update: { $set: { currentStock: actual } } },
+                });
+            }
+        }
+    }
+
+    if (ops.length) {
+        await StockItem.bulkWrite(ops, { ordered: false });
+        console.log(`  FIXED  ${ops.length} stock rows`);
+    }
+};
+
+// ---- rollups ----
+// Rebuilt from the ledger. Voided rows are skipped and REVERSAL rows are
+// applied inversely against their original type — exactly the way
+// ledger.service does it.
+const checkRollups = async (session) => {
+    console.log('\nMonthly rollups');
+
+    const [txns, demands, purchases] = await Promise.all([
+        Transaction.find({ session }).select('type month amount class className voided reversalOf').lean(),
+        FeeDemand.aggregate([
+            { $match: { session } },
+            {
+                $group: {
+                    _id: { month: '$month', class: '$class' },
+                    className: { $first: '$className' },
+                    expected: { $sum: '$amount' },
+                    discount: { $sum: '$discount' },
+                },
+            },
+        ]),
+        Purchase.aggregate([
+            { $match: { session } },
+            { $group: { _id: null, total: { $sum: '$total' } } },
+        ]),
+    ]);
+
+    // Lookup to resolve a reversal row's original type
+    const byId = new Map(txns.map((t) => [t._id.toString(), t]));
+    const buckets = new Map();
+
+    const bump = (month, classId, className, field, amount) => {
+        for (const scope of ['SCHOOL', 'CLASS']) {
+            if (scope === 'CLASS' && !classId) continue;
+            // The SCHOOL bucket covers the whole school — its key never includes a
+            // class, otherwise every class would get its own "SCHOOL" total.
+            const bucketClass = scope === 'SCHOOL' ? null : classId;
+            const key = `${month}|${scope}|${bucketClass || 'null'}`;
+            if (!buckets.has(key)) buckets.set(key, { month, scope, class: bucketClass, className: scope === 'CLASS' ? className : '' });
+            const b = buckets.get(key);
+            b[field] = round2((b[field] || 0) + amount);
+        }
+    };
+
+    for (const t of txns) {
+        // Voided rows are NOT skipped. When they were written they raised the
+        // rollup, and their REVERSAL row lowered it again. Counting both is what
+        // actually reproduces the live state.
+        let effectiveType = t.type;
+        let sign = 1;
+
+        if (t.type === 'REVERSAL') {
+            const original = t.reversalOf && byId.get(t.reversalOf.toString());
+            if (!original) continue;
+            effectiveType = original.type;
+            sign = -1;
+        }
+
+        const mapping = ROLLUP_MAP[effectiveType];
+        if (!mapping) continue;
+
+        const [head, cash] = mapping;
+        if (head) bump(t.month, t.class, t.className, head, sign * t.amount);
+        if (cash) bump(t.month, t.class, t.className, cash, sign * t.amount);
+    }
+
+    for (const d of demands) {
+        bump(d._id.month, d._id.class, d.className, 'feeExpected', d.expected);
+        bump(d._id.month, d._id.class, d.className, 'feeDiscount', d.discount);
+    }
+
+    const stored = await MonthlyRollup.find({ session }).lean();
+    const storedMap = new Map(
+        stored.map((r) => [`${r.month}|${r.scope}|${r.class || 'null'}`, r])
+    );
+
+    const FIELDS = [
+        'feeExpected', 'feeCollected', 'feeDiscount', 'stockSales',
+        'otherIncome', 'expenses', 'salaries', 'vendorPaid', 'cashIn', 'cashOut',
+    ];
+
+    const ops = [];
+
+    for (const [key, actual] of buckets) {
+        const current = storedMap.get(key) || {};
+        let drifted = false;
+
+        for (const f of FIELDS) {
+            if (round2(current[f] || 0) !== round2(actual[f] || 0)) {
+                console.log(
+                    `  DRIFT  rollup ${key} ${f}: ${round2(current[f] || 0)} -> ${round2(actual[f] || 0)}`
+                );
+                driftCount += 1;
+                drifted = true;
+            }
+        }
+
+        if (drifted && FIX) {
+            const set = { session, month: actual.month, scope: actual.scope, class: actual.class, lastRecomputedAt: new Date() };
+            if (actual.className) set.className = actual.className;
+            for (const f of FIELDS) set[f] = round2(actual[f] || 0);
+
+            ops.push({
+                updateOne: {
+                    filter: { session, month: actual.month, scope: actual.scope, class: actual.class },
+                    update: { $set: set },
+                    upsert: true,
+                },
+            });
+        }
+    }
+
+    if (ops.length) {
+        await MonthlyRollup.bulkWrite(ops, { ordered: false });
+        console.log(`  FIXED  ${ops.length} rollup rows`);
+    }
+
+    console.log(`  (purchases total across session: ${round2(purchases[0]?.total || 0)})`);
+};
+
+const run = async () => {
+    await mongoose.connect(process.env.MONGODB_URI);
+
+    const active = await AcademicSession.findOne({ isActive: true }).lean();
+    if (!active) {
+        console.error('There is no active session.');
+        process.exit(1);
+    }
+
+    console.log(`Session: ${active.name}   mode: ${FIX ? 'FIX' : 'REPORT ONLY'}`);
+
+    await checkStudents(active.name);
+    await checkVendors();
+    await checkStock();
+    await checkRollups(active.name);
+
+    console.log(
+        driftCount === 0
+            ? '\nNo drift. Every balance matches the ledger.'
+            : `\n${driftCount} drift${FIX ? ' repaired' : ' found — re-run with --fix to repair'}.`
+    );
+
+    process.exit(driftCount && !FIX ? 2 : 0);
+};
+
+run().catch((err) => {
+    console.error('Recompute fail:', err.message);
+    process.exit(1);
+});

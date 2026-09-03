@@ -1,0 +1,42 @@
+{
+  "name": "sps-backend",
+  "version": "1.0.0",
+  "description": "Sahara Public School - fees, stock, purchases, attendance and payroll API",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "nodemon server/index.js",
+    "start": "node server/index.js",
+    "build:indexes": "node scripts/buildIndexes.js",
+    "seed:admin": "node scripts/seedAdmin.js",
+    "seed:session": "node scripts/seedSession.js",
+    "recompute:balances": "node scripts/recomputeBalances.js",
+    "backup": "node scripts/backup.js",
+    "test": "node tests/routes.js && node tests/smoke.js && node tests/http.js && node tests/dues.js && node tests/salary.js",
+    "test:routes": "node tests/routes.js",
+    "test:smoke": "node tests/smoke.js",
+    "test:http": "node tests/http.js",
+    "test:dues": "node tests/dues.js",
+    "test:salary": "node tests/salary.js",
+    "test:mongo": "node tests/mongoReplSetInit.js"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "compression": "^1.7.4",
+    "cookie-parser": "^1.4.6",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-mongo-sanitize": "^2.2.0",
+    "express-rate-limit": "^7.2.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.3.2",
+    "zod": "^3.23.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
