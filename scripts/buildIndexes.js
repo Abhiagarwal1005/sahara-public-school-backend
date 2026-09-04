@@ -17,6 +17,7 @@ const models = [
     require('../server/src/models/academicSession.model'),
     require('../server/src/models/schoolClass.model'),
     require('../server/src/models/student.model'),
+    require('../server/src/models/lead.model'),
     require('../server/src/models/feeDemand.model'),
     require('../server/src/models/transaction.model'),
     require('../server/src/models/monthlyRollup.model'),

@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const studentSchema = new mongoose.Schema(
     {
         session: { type: String, required: true },
-        admissionNo: { type: String, required: true }, // ADM0412 - counter se
+        admissionNo: { type: String, required: true }, // ADM0412, from the counter
         name: { type: String, required: true, trim: true },
         // Search key. The anchored regex (^) runs on this so Mongo can walk the
         // index — see utils/search.js for why.

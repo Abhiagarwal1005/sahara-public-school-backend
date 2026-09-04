@@ -71,6 +71,20 @@ const updateSlipSchema = z.object({
     note: z.string().trim().max(200).optional().or(z.literal('')),
 });
 
+// Both path params, because validate() assigns the PARSED object back over
+// req.params — and zod strips whatever the schema does not mention. Reusing
+// idParamSchema here silently deleted req.params.adjustmentId, so the delete
+// matched nothing and answered 404.
+const adjustmentParamsSchema = z.object({ id: objectId, adjustmentId: objectId });
+
+// A bonus, an arrear, a fine. The reason is required — a number on a salary
+// slip with nothing explaining it is what starts the argument.
+const adjustmentSchema = z.object({
+    kind: z.enum(['Add', 'Deduct']),
+    label: z.string().trim().min(2, 'Write the reason').max(60),
+    amount: positiveMoney,
+});
+
 const paySlipSchema = z.object({
     // If omitted, the full remaining amount is paid
     amount: positiveMoney.optional(),
@@ -86,5 +100,7 @@ module.exports = {
     markClassAttendanceSchema,
     generateSalarySchema,
     updateSlipSchema,
+    adjustmentSchema,
+    adjustmentParamsSchema,
     paySlipSchema,
 };

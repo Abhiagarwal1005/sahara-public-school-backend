@@ -1,5 +1,23 @@
 const mongoose = require('mongoose');
 
+// A hand-entered line on the slip: a bonus, an arrear, a fine, a breakage
+// recovery. Every one carries a reason, because "why is my salary ₹800 less
+// this month" is the question these exist to answer.
+//
+// It keeps its own _id on purpose — the screen removes a line by id, and
+// removing by array position goes wrong the moment two people are editing.
+const adjustmentSchema = new mongoose.Schema({
+    kind: { type: String, enum: ['Add', 'Deduct'], required: true },
+    label: { type: String, required: true, trim: true },
+    amount: { type: Number, required: true, min: 0 },
+    at: { type: Date, default: Date.now },
+    by: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+    byName: { type: String, default: '' },
+});
+
+// Superseded by `adjustments` (which can also add). Kept so a slip created
+// before adjustments existed does not silently gain back the money that was
+// deducted from it.
 const deductionSchema = new mongoose.Schema(
     { label: { type: String, required: true }, amount: { type: Number, required: true, min: 0 } },
     { _id: false }
@@ -47,6 +65,9 @@ const salarySlipSchema = new mongoose.Schema(
         payableDays: { type: Number, default: 0 },
 
         earned: { type: Number, default: 0 },
+        // Bonuses, arrears, fines — anything added to or taken off this slip
+        adjustments: { type: [adjustmentSchema], default: [] },
+        // legacy, see above
         deductions: { type: [deductionSchema], default: [] },
         advance: { type: Number, default: 0, min: 0 },
         netPayable: { type: Number, default: 0 },

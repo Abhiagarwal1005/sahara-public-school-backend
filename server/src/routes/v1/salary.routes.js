@@ -7,6 +7,8 @@ const { heavyLimiter } = require('../../middlewares/rateLimiter');
 const {
     generateSalarySchema,
     updateSlipSchema,
+    adjustmentSchema,
+    adjustmentParamsSchema,
     paySlipSchema,
 } = require('../../validators/staff.validator');
 const { idParamSchema } = require('../../validators/auth.validator');
@@ -18,6 +20,10 @@ router.post('/generate', can('salary.generate'), heavyLimiter, validate(generate
 
 // Only a Draft is editable — after approval the slip is frozen
 router.patch('/slips/:id', can('salary.generate'), validate(idParamSchema, 'params'), validate(updateSlipSchema), c.updateSlip);
+
+// Bonus / arrear / fine on a draft. Same permission as editing one.
+router.post('/slips/:id/adjustment', can('salary.generate'), validate(idParamSchema, 'params'), validate(adjustmentSchema), c.addAdjustment);
+router.delete('/slips/:id/adjustment/:adjustmentId', can('salary.generate'), validate(adjustmentParamsSchema, 'params'), c.removeAdjustment);
 
 // Discard a draft so the next generate rebuilds it from current attendance
 router.delete('/slips/:id', can('salary.generate'), validate(idParamSchema, 'params'), c.discardSlip);

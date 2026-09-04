@@ -23,6 +23,7 @@ npm run test:mongo     # initiates the replica set
 | `npm run test:http` | The real HTTP surface — auth, cookies, permission changes taking effect live |
 | `npm run test:dues` | Stock dues — collecting what a student owes on a credit sale, and what a void may not undo |
 | `npm run test:salary` | Payroll — Sundays paid automatically, and what Present / HalfDay / Leave / Absent are each worth |
+| `npm run test:leads` | Enquiries — follow-up queue, and proof the module touches no student, fee, ledger or rollup |
 
 `smoke.js` drops and rebuilds its own database (`sps_smoke`) on every run.
 `dues.js` uses a separate database (`sps_dues`) so it can move balances freely

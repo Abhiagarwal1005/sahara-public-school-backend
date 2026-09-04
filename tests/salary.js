@@ -21,6 +21,7 @@ const mongoose = require('mongoose');
 const connectDB = require('../server/src/config/db');
 const User = require('../server/src/models/user.model');
 const salaryService = require('../server/src/services/salary.service');
+const Transaction = require('../server/src/models/transaction.model');
 const attendanceService = require('../server/src/services/attendance.service');
 const teacherService = require('../server/src/services/teacher.service');
 const sessionService = require('../server/src/services/session.service');
@@ -30,6 +31,7 @@ const { isSundayIST, sundaysInMonthIST, daysInMonthIST } = require('../server/sr
 
 let pass = 0, fail = 0;
 const ok = (l, c, d = '') => { c ? (pass++, console.log(`  PASS  ${l}${d ? ' — ' + d : ''}`)) : (fail++, console.log(`  FAIL  ${l}${d ? ' — ' + d : ''}`)); };
+const throws = async (fn) => { try { await fn(); return null; } catch (e) { return e; } };
 const section = (t) => console.log(`\n== ${t}`);
 
 // Build a month of marks: every non-Sunday Present, Sundays as given.
@@ -131,6 +133,7 @@ const buildMarks = (month, { sundayStatus = null, overrides = {} } = {}) => {
   const sess = await sessionService.create({ name: '2026-27', startDate: new Date('2026-04-01'), endDate: new Date('2027-03-31') }, new mongoose.Types.ObjectId());
   await sessionService.activate(sess._id); sessionCache.clear();
   const admin = await User.create({ name: 'Admin', username: 'admin', role: 'Admin', password: 'test1234' });
+  const actor = { id: admin._id, name: 'Admin' };
   await teacherService.create({ name: 'Rajesh Kumar', monthlySalary: 10000, joiningDate: new Date('2026-04-01') }, admin._id);
 
   const sun = await attendanceService.getTeacherSheet('2026-08-02'); // a Sunday
@@ -174,10 +177,115 @@ const buildMarks = (month, { sundayStatus = null, overrides = {} } = {}) => {
   try { await salaryService.discard(slip._id); } catch { lockedOut = true; }
   ok('An approved slip cannot be discarded', lockedOut);
 
+  section('Bonus, arrear, fine — hand-entered lines');
+  const t3 = await teacherService.create({ name: 'Meera Joshi', monthlySalary: 12000, joiningDate: new Date('2026-04-01') }, admin._id);
+  for (let d = 1; d <= 30; d += 1) {
+    const date = new Date(Date.UTC(2026, 8, d, 6, 0, 0));
+    if (isSundayIST(date)) continue;
+    await attendanceService.markTeachers({ date, entries: [{ teacher: t3._id, status: 'Present' }] }, admin._id);
+  }
+  await salaryService.generate({ month: '2026-09' }, admin._id);
+  let ms = (await salaryService.list({ month: '2026-09' })).slips.find((x) => x.teacherName === 'Meera Joshi');
+  ok('Starts at the full ₹12,000', ms.netPayable === 12000, `₹${ms.netPayable}`);
+
+  let updated = await salaryService.addAdjustment(ms._id, { kind: 'Add', label: 'Diwali bonus', amount: 2000 }, actor);
+  ok('A bonus raises the net', updated.netPayable === 14000, `₹${updated.netPayable}`);
+  ok('The reason is stored', updated.adjustments[0].label === 'Diwali bonus');
+  ok('So is who added it', updated.adjustments[0].byName === 'Admin');
+
+  updated = await salaryService.addAdjustment(ms._id, { kind: 'Deduct', label: 'Breakage recovery', amount: 500 }, actor);
+  ok('A deduction lowers it', updated.netPayable === 13500, `₹${updated.netPayable}`);
+  ok('Both lines are kept', updated.adjustments.length === 2);
+
+  const tooBig = await throws(() => salaryService.addAdjustment(ms._id, { kind: 'Deduct', label: 'Mistake', amount: 99999 }, actor));
+  ok('A deduction cannot take the net below zero', tooBig && tooBig.statusCode === 400, tooBig && tooBig.message);
+  ok('And nothing was written', (await salaryService.getById(ms._id)).netPayable === 13500);
+
+  section('Advance still stacks on top');
+  await salaryService.update(ms._id, { advance: 1500 });
+  ms = await salaryService.getById(ms._id);
+  ok('12000 + 2000 - 500 - 1500 = 12000', ms.netPayable === 12000, `₹${ms.netPayable}`);
+
+  section('Removing a line');
+  const bonusId = ms.adjustments.find((a) => a.label === 'Diwali bonus')._id;
+  updated = await salaryService.removeAdjustment(ms._id, bonusId);
+  ok('The bonus is gone', updated.adjustments.length === 1);
+  ok('And the net came back down', updated.netPayable === 10000, `₹${updated.netPayable}`);
+  const missing = await throws(() => salaryService.removeAdjustment(ms._id, new mongoose.Types.ObjectId()));
+  ok('Removing a line that is not there -> 404', missing && missing.statusCode === 404);
+
+  section('Approval freezes the lines too');
+  await salaryService.approve(ms._id, admin._id);
+  const locked = await throws(() => salaryService.addAdjustment(ms._id, { kind: 'Add', label: 'Late bonus', amount: 100 }, actor));
+  ok('No adjustment after approval', locked && locked.statusCode === 409, locked && locked.code);
+  const lockedRm = await throws(() => salaryService.removeAdjustment(ms._id, ms.adjustments[0]._id));
+  ok('And none can be removed either', lockedRm && lockedRm.statusCode === 409);
+
+  section('Payment uses the adjusted figure');
+  const paidOut = await salaryService.pay(ms._id, { mode: 'Cash' }, admin._id);
+  ok('Paid the adjusted net, not the earned', paidOut.paid === 10000, `₹${paidOut.paid}`);
+  ok('Nothing remaining', paidOut.remaining === 0);
+  const salTxn = await Transaction.findOne({ refModel: 'SalarySlip', refId: ms._id, type: 'SALARY' }).lean();
+  ok('Ledger records the chosen payment mode', salTxn.mode === 'Cash', salTxn.mode);
+  ok('Ledger amount matches the net', salTxn.amount === 10000, `₹${salTxn.amount}`);
+
   section('Monthly grid marks the Sundays for the UI');
   const grid = await attendanceService.teacherMonthlyGrid(MONTH);
   ok('Grid reports 31 columns', grid.totalDays === 31, `${grid.totalDays}`);
   ok('Grid names every Sunday', JSON.stringify(grid.sundays) === JSON.stringify([2, 9, 16, 23, 30]), JSON.stringify(grid.sundays));
+
+  // -------------------------------------------------------------------------
+  // Over real HTTP, not the service layer.
+  //
+  // The service-level checks above all passed while DELETE was broken in
+  // production: validate() assigns the parsed object back over req.params and
+  // zod strips what the schema does not name, so :adjustmentId vanished before
+  // the controller saw it. Only a request through the router catches that.
+  // -------------------------------------------------------------------------
+  section('The adjustment routes, over HTTP');
+  const app = require('../server/app');
+  const server = app.listen(0);
+  const base = `http://127.0.0.1:${server.address().port}/api/v1`;
+  const call = async (m, path, { token, body } = {}) => {
+    const res = await fetch(base + path, {
+      method: m,
+      headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) },
+      ...(body && { body: JSON.stringify(body) }),
+    });
+    let j = null; try { j = await res.json(); } catch {}
+    return { status: res.status, body: j };
+  };
+
+  const login = await call('POST', '/auth/login', { body: { username: 'admin', password: 'test1234' } });
+  const token = login.body?.data?.accessToken;
+  ok('Signed in for the HTTP checks', Boolean(token));
+
+  const t4 = await teacherService.create({ name: 'Neha Bhatt', monthlySalary: 9000, joiningDate: new Date('2026-04-01') }, admin._id);
+  for (let d = 1; d <= 31; d += 1) {
+    const date = new Date(Date.UTC(2026, 9, d, 6, 0, 0));
+    if (isSundayIST(date)) continue;
+    await attendanceService.markTeachers({ date, entries: [{ teacher: t4._id, status: 'Present' }] }, admin._id);
+  }
+  await salaryService.generate({ month: '2026-10' }, admin._id);
+  const nb = (await salaryService.list({ month: '2026-10' })).slips.find((x) => x.teacherName === 'Neha Bhatt');
+
+  const added = await call('POST', `/salary/slips/${nb._id}/adjustment`, { token, body: { kind: 'Add', label: 'Exam duty', amount: 1200 } });
+  ok('POST adjustment -> 201', added.status === 201, `net ₹${added.body?.data?.netPayable}`);
+  ok('Net rose by the bonus', added.body?.data?.netPayable === 10200, `₹${added.body?.data?.netPayable}`);
+
+  const bad = await call('POST', `/salary/slips/${nb._id}/adjustment`, { token, body: { kind: 'Add', label: 'x', amount: 100 } });
+  ok('A one-letter reason is rejected', bad.status === 400);
+
+  const adjId = added.body.data.adjustments[0]._id;
+  const removed = await call('DELETE', `/salary/slips/${nb._id}/adjustment/${adjId}`, { token });
+  ok('DELETE adjustment -> 200', removed.status === 200, removed.body?.message);
+  ok('The line is really gone', removed.body?.data?.adjustments?.length === 0);
+  ok('And the net came back down', removed.body?.data?.netPayable === 9000, `₹${removed.body?.data?.netPayable}`);
+
+  const badId = await call('DELETE', `/salary/slips/${nb._id}/adjustment/not-an-id`, { token });
+  ok('A malformed adjustment id -> 400', badId.status === 400);
+
+  server.close();
 
   console.log('\n' + '='.repeat(50));
   console.log(`PASS: ${pass}   FAIL: ${fail}`);

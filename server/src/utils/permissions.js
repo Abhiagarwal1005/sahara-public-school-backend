@@ -17,6 +17,11 @@ const PERMISSIONS = [
     { module: 'Students', key: 'student.edit', label: 'Edit student / change class' },
     { module: 'Students', key: 'student.delete', label: 'Mark student as left' },
 
+    // Enquiries that have not become admissions. A module of its own
+    // because a lead is connected to nothing else in the app.
+    { module: 'Leads', key: 'lead.view', label: 'View enquiries & follow-ups' },
+    { module: 'Leads', key: 'lead.manage', label: 'Add / update an enquiry, log follow-ups' },
+
     { module: 'Classes', key: 'class.view', label: 'View classes' },
     { module: 'Classes', key: 'class.manage', label: 'Create / edit classes' },
 
@@ -80,6 +85,7 @@ const ADMIN_ONLY = new Set(['permission.manage']);
 const DEFAULT_GRANTS = {
     Principal: [
         'student.view', 'student.create', 'student.edit', 'student.delete',
+        'lead.view', 'lead.manage',
         'class.view', 'class.manage',
         'fee.view', 'fee.generate', 'fee.collect', 'fee.discount', 'fee.void',
         // stock.manage is deliberately absent — the Accountant maintains
@@ -96,6 +102,7 @@ const DEFAULT_GRANTS = {
     ],
     Accountant: [
         'student.view', 'student.create', 'student.edit',
+        'lead.view', 'lead.manage',
         'class.view',
         'fee.view', 'fee.generate', 'fee.collect',
         'stock.view', 'stock.manage', 'stock.sell',

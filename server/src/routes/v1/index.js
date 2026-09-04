@@ -24,6 +24,7 @@ router.use('/permissions', require('./permission.routes'));
 router.use('/sessions', require('./session.routes'));
 router.use('/classes', require('./class.routes'));
 router.use('/students', require('./student.routes'));
+router.use('/leads', require('./lead.routes'));
 router.use('/fees', require('./fee.routes'));
 router.use('/stock', require('./stock.routes'));
 router.use('/sales', require('./sale.routes'));

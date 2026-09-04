@@ -11,12 +11,13 @@
     "seed:session": "node scripts/seedSession.js",
     "recompute:balances": "node scripts/recomputeBalances.js",
     "backup": "node scripts/backup.js",
-    "test": "node tests/routes.js && node tests/smoke.js && node tests/http.js && node tests/dues.js && node tests/salary.js",
+    "test": "node tests/routes.js && node tests/smoke.js && node tests/http.js && node tests/dues.js && node tests/salary.js && node tests/leads.js",
     "test:routes": "node tests/routes.js",
     "test:smoke": "node tests/smoke.js",
     "test:http": "node tests/http.js",
     "test:dues": "node tests/dues.js",
     "test:salary": "node tests/salary.js",
+    "test:leads": "node tests/leads.js",
     "test:mongo": "node tests/mongoReplSetInit.js"
   },
   "dependencies": {

@@ -127,9 +127,20 @@ const computeSlip = ({ teacher, marks, month = null, monthDaysOverride = null })
     };
 };
 
+// What the teacher actually takes home.
+//
+//   earned + everything added - everything deducted - advance already given
+//
+// `deductions` is the pre-adjustments field. It is still subtracted so an old
+// slip keeps its numbers; nothing writes to it any more.
 const netOf = (slip) => {
-    const deductionTotal = (slip.deductions || []).reduce((s, d) => s + d.amount, 0);
-    return round2(slip.earned - deductionTotal - (slip.advance || 0));
+    const adjusted = (slip.adjustments || []).reduce(
+        (sum, a) => sum + (a.kind === 'Add' ? a.amount : -a.amount),
+        0
+    );
+    const legacy = (slip.deductions || []).reduce((sum, d) => sum + d.amount, 0);
+
+    return round2(slip.earned + adjusted - legacy - (slip.advance || 0));
 };
 
 // ---------------------------------------------------------------------------
@@ -189,6 +200,7 @@ const generate = async ({ month }, actorId) => {
             teacherName: teacher.name,
             designation: teacher.designation,
             ...computed,
+            adjustments: [],
             deductions: [],
             advance: 0,
             netPayable: computed.earned,
@@ -302,6 +314,63 @@ const discard = async (id) => {
     return { discarded: id, month: slip.month, teacherName: slip.teacherName };
 };
 
+// ---------------------------------------------------------------------------
+// A hand-entered line: a bonus, an arrear, a fine.
+//
+// Draft only, for the same reason everything else is: an approved slip is
+// what the teacher was told they would be paid. A correction after that is a
+// separate entry, not a quiet edit of the original.
+// ---------------------------------------------------------------------------
+const addAdjustment = async (id, { kind, label, amount }, actor) => {
+    const slip = await SalarySlip.findById(id);
+    if (!slip) throw new ApiError(404, 'Slip not found');
+
+    if (slip.status !== 'Draft') {
+        throw new ApiError(
+            409,
+            'An approved slip is not editable — make a correction with a separate adjustment'
+        ).withCode('SLIP_LOCKED');
+    }
+
+    slip.adjustments.push({
+        kind,
+        label: label.trim(),
+        amount: round2(amount),
+        at: new Date(),
+        by: actor.id,
+        byName: actor.name || '',
+    });
+
+    slip.netPayable = netOf(slip);
+
+    // A slip cannot pay out less than nothing. Without this a mistyped fine
+    // would produce a negative payable that the ledger would then try to pay.
+    if (slip.netPayable < 0) {
+        throw new ApiError(400, 'That would take the net payable below zero');
+    }
+
+    await slip.save();
+    return slip;
+};
+
+const removeAdjustment = async (id, adjustmentId) => {
+    const slip = await SalarySlip.findById(id);
+    if (!slip) throw new ApiError(404, 'Slip not found');
+
+    if (slip.status !== 'Draft') {
+        throw new ApiError(409, 'An approved slip is not editable').withCode('SLIP_LOCKED');
+    }
+
+    const before = slip.adjustments.length;
+    slip.adjustments = slip.adjustments.filter((a) => String(a._id) !== String(adjustmentId));
+
+    if (slip.adjustments.length === before) throw new ApiError(404, 'That line is not on this slip');
+
+    slip.netPayable = netOf(slip);
+    await slip.save();
+    return slip;
+};
+
 // Approve = freeze. After this, neither an attendance correction nor a
 // salary revision can change this slip.
 const approve = async (id, actorId) => {
@@ -375,4 +444,15 @@ const pay = async (id, { amount, mode, date, note = '' }, actorId) => {
     });
 };
 
-module.exports = { generate, list, getById, update, discard, approve, pay, computeSlip };
+module.exports = {
+    generate,
+    list,
+    getById,
+    update,
+    addAdjustment,
+    removeAdjustment,
+    discard,
+    approve,
+    pay,
+    computeSlip,
+};

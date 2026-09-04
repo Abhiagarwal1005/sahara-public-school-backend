@@ -105,6 +105,26 @@ const updateSlip = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, data, 'Slip updated'));
 });
 
+const addAdjustment = asyncHandler(async (req, res) => {
+    const actor = { id: req.userId, name: req.user.name };
+    const data = await salaryService.addAdjustment(req.params.id, req.body, actor);
+
+    audit.log({
+        ...audit.fromRequest(req),
+        action: 'salary.adjust',
+        entity: 'SalarySlip',
+        entityId: req.params.id,
+        summary: `${req.body.kind === 'Add' ? '+' : '-'}₹${req.body.amount} ${req.body.label}`,
+    });
+
+    return res.status(201).json(new ApiResponse(201, data, 'Adjustment added'));
+});
+
+const removeAdjustment = asyncHandler(async (req, res) => {
+    const data = await salaryService.removeAdjustment(req.params.id, req.params.adjustmentId);
+    return res.status(200).json(new ApiResponse(200, data, 'Adjustment removed'));
+});
+
 const discardSlip = asyncHandler(async (req, res) => {
     const data = await salaryService.discard(req.params.id);
 
@@ -163,6 +183,8 @@ module.exports = {
     listSlips,
     getSlip,
     updateSlip,
+    addAdjustment,
+    removeAdjustment,
     discardSlip,
     approveSlip,
     paySlip,
