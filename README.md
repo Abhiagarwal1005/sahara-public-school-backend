@@ -85,7 +85,7 @@ npm run seed:session 2026-27     # session + classes
 npm run build:indexes            # after a deploy, and after any schema change
 npm run recompute:balances       # drift check — see below
 npm run backup                   # gzipped JSON per collection
-npm test                         # routes + smoke + http suites
+npm test                         # routes + smoke + http + dues + salary + leads
 ```
 
 `recompute:balances` is the safety net for the denormalised design — it
@@ -116,13 +116,28 @@ run it daily:
 
 ## To confirm with the client
 
-The salary rule is currently `monthlySalary ÷ workingDays × payableDays`,
-where `payableDays = Present + (HalfDay × 0.5) + Leave`, and `workingDays`
-comes from the attendance sheet itself (excluding Holiday).
+The salary rule is currently:
+
+```
+perDayRate  = monthlySalary ÷ days in the month   (31 / 30 / 28)
+payableDays = Present + (HalfDay × 0.5) + Leave + Sundays + Holidays
+earned      = perDayRate × payableDays
+netPayable  = earned + adjustments(Add) − adjustments(Deduct) − advance
+```
+
+Sundays and school holidays are **paid** and are added automatically from the
+calendar — nobody marks a Sunday, and marking one by mistake changes nothing.
+Only `Absent` (full) and `HalfDay` (half) reduce the pay.
+
+A day that was **never marked is not paid**. That is deliberate: the sheet
+defaults everyone to Present, so the office marks only the exceptions, and a
+month nobody filled in must not quietly pay everybody in full. A slip cannot
+be generated at all for a month with no attendance.
 
 Schools vary a lot here — some allow two free absences a month, some have a
-leave quota, some deduct nothing at all. **This is the one calculation every
-teacher checks personally.** Changing the rule means changing `computeSlip()`
-in `salary.service.js` and nothing else.
+leave quota, some deduct nothing at all, and **`Leave` is currently fully
+paid**. **This is the one calculation every teacher checks personally.**
+Changing the rule means changing `computeSlip()` in `salary.service.js` and
+nothing else.
 
 The remaining open questions are in Section 13 of the design document.

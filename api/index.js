@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Vercel ka entry point.
+// The Vercel entry point.
 //
 // The ENTIRE app is ONE function, not a file per route. The instinct on
 // Vercel is the opposite, but one function means one cold start, one
