@@ -36,6 +36,17 @@ const logout = asyncHandler(async (req, res) => {
 
 const changePassword = asyncHandler(async (req, res) => {
     const result = await authService.changePassword(req.userId, req.body);
+
+    // No before/after — a password never goes into the history. What matters
+    // is that it changed, by whom, and when.
+    audit.log({
+        ...audit.fromRequest(req),
+        action: 'user.changePassword',
+        entity: 'User',
+        entityId: req.userId,
+        summary: 'Changed their own password',
+    });
+
     res.clearCookie('sps_rt', authService.clearCookieOptions());
     return res
         .status(200)
@@ -62,7 +73,7 @@ const createUser = asyncHandler(async (req, res) => {
         action: 'user.create',
         entity: 'User',
         entityId: result.user.id,
-        summary: `${result.user.name} (${result.user.role}) banaya`,
+        summary: `${result.user.name} created as ${result.user.role}`,
     });
 
     // tempPassword is shown only here — the Admin should hand it over now
@@ -118,12 +129,28 @@ const updatePermissions = asyncHandler(async (req, res) => {
         action: 'permission.update',
         entity: 'RolePermission',
         entityId: updated._id,
-        summary: `permissions updated for ${req.params.role}`,
+        summary: `${req.params.role} permissions updated`,
         before: [...before],
         after: updated.permissions,
     });
 
-    return res.status(200).json(new ApiResponse(200, updated, 'Permissions update ho gayin'));
+    return res.status(200).json(new ApiResponse(200, updated, 'Permissions updated'));
+});
+
+// ---- edit history (audit.view) ----
+
+// Every change worth explaining: who, what, when, and the before/after of the
+// fields that moved. The collection was being written to long before anything
+// could read it — this is that missing half.
+const listAudit = asyncHandler(async (req, res) => {
+    const data = await audit.list(req.query);
+    return res.status(200).json(new ApiResponse(200, data, 'Edit history'));
+});
+
+// One record's own trail — the panel on a student or a teacher.
+const entityHistory = asyncHandler(async (req, res) => {
+    const data = await audit.forEntity(req.params.entity, req.params.id);
+    return res.status(200).json(new ApiResponse(200, data, 'History'));
 });
 
 module.exports = {
@@ -138,4 +165,6 @@ module.exports = {
     resetUserPassword,
     getPermissions,
     updatePermissions,
+    listAudit,
+    entityHistory,
 };

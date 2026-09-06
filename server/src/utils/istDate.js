@@ -27,6 +27,18 @@ const monthKeyIST = (input = new Date()) => {
     return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
 };
 
+// The day of the month in IST.
+//
+// An attendance date is stored as IST midnight held as a UTC instant, so
+// 1 Aug 2026 IST is 2026-07-31T18:30Z — and getUTCDate() on that answers 31,
+// the previous month's last day. Anything that keys off the day number (the
+// monthly grid's columns) has to come through here, or every mark lands one
+// column to the left and the 1st wraps around to the end of the row.
+const dayOfMonthIST = (input = new Date()) => {
+    const d = new Date(new Date(input).getTime() + IST_OFFSET_MS);
+    return d.getUTCDate();
+};
+
 // A month key to the UTC instants bounding its IST range, for date-range queries.
 const monthRangeIST = (monthKey) => {
     const [year, month] = monthKey.split('-').map(Number);
@@ -72,6 +84,7 @@ module.exports = {
     startOfDayIST,
     endOfDayIST,
     monthKeyIST,
+    dayOfMonthIST,
     monthRangeIST,
     addDays,
     daysBetweenIST,

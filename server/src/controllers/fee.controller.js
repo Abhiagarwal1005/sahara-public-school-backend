@@ -35,7 +35,7 @@ const collect = asyncHandler(async (req, res) => {
         action: 'fee.collect',
         entity: 'Transaction',
         entityId: data.transactionId,
-        summary: `${data.receiptNo}: ${data.student.name} se ₹${data.amount} (${data.mode})`,
+        summary: `${data.receiptNo}: ₹${data.amount} from ${data.student.name} (${data.mode})`,
     });
 
     return res.status(201).json(new ApiResponse(201, data, 'Fee collected'));

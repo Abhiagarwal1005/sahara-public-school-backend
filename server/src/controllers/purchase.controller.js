@@ -3,6 +3,9 @@ const ApiResponse = require('../utils/ApiResponse');
 const vendorService = require('../services/vendor.service');
 const purchaseService = require('../services/purchase.service');
 const audit = require('../services/audit.service');
+// Only for the BEFORE snapshot on an edit — the write stays in the service.
+const Vendor = require('../models/vendor.model');
+const Purchase = require('../models/purchase.model');
 
 // ---- vendors ----
 
@@ -18,11 +21,31 @@ const getVendor = asyncHandler(async (req, res) => {
 
 const createVendor = asyncHandler(async (req, res) => {
     const data = await vendorService.create(req.body, req.userId);
+
+    audit.logCreate(req, {
+        action: 'vendor.create',
+        entity: 'Vendor',
+        entityId: data._id,
+        label: `${data.name} added`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Vendor added'));
 });
 
 const updateVendor = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(Vendor, req.params.id, 'Vendor');
     const data = await vendorService.update(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'vendor.update',
+        entity: 'Vendor',
+        entityId: data._id,
+        label: data.name,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Vendor updated'));
 });
 
@@ -44,7 +67,7 @@ const payVendor = asyncHandler(async (req, res) => {
         action: 'vendor.pay',
         entity: 'VendorPayment',
         entityId: data._id,
-        summary: `${data.vendorName} ko ₹${data.amount} (${data.mode}) - bills: ${data.allocations
+        summary: `₹${data.amount} to ${data.vendorName} (${data.mode}) — bills: ${data.allocations
             .map((a) => a.billNo)
             .join(', ')}`,
     });
@@ -83,8 +106,22 @@ const getPurchase = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, data, 'Purchase'));
 });
 
+// Only the note, the photo and the date are editable — the amounts are frozen
+// (purchase.service refuses the rest). Even so, moving a bill's DATE moves it
+// between months on a report, so it is worth a name against it.
 const updatePurchase = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(Purchase, req.params.id, 'Purchase');
     const data = await purchaseService.update(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'purchase.update',
+        entity: 'Purchase',
+        entityId: data._id,
+        label: `Bill ${data.billNo} — ${data.vendorName}`,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Purchase updated'));
 });
 

@@ -33,5 +33,8 @@ const auditLogSchema = new mongoose.Schema(
 auditLogSchema.index({ createdAt: -1 });
 auditLogSchema.index({ entity: 1, entityId: 1, createdAt: -1 });
 auditLogSchema.index({ actor: 1, createdAt: -1 });
+// The history screen filters by module — an anchored prefix on action
+// ('fee' -> fee.collect, fee.discount, fee.void) walks this index.
+auditLogSchema.index({ action: 1, createdAt: -1 });
 
 module.exports = mongoose.models.AuditLog || mongoose.model('AuditLog', auditLogSchema);

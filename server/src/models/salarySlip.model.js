@@ -57,6 +57,17 @@ const salarySlipSchema = new mongoose.Schema(
         leaveDays: { type: Number, default: 0 },
         absentDays: { type: Number, default: 0 },
         holidayDays: { type: Number, default: 0 },
+
+        // ---- late arrivals ----
+        // lateDays is the raw count; lateAllowed is the teacher's monthly
+        // allowance SNAPSHOT here (raising it next month must not rewrite this
+        // slip); lateChargeable is what was left after it, and
+        // lateDeductionDays what that cost. All four are stored because the
+        // teacher asks "why is a day missing" and the slip has to answer it.
+        lateDays: { type: Number, default: 0 },
+        lateAllowed: { type: Number, default: 0 },
+        lateChargeable: { type: Number, default: 0 },
+        lateDeductionDays: { type: Number, default: 0 },
         // Days nobody marked — not paid, and shown so the gap is visible
         unmarkedDays: { type: Number, default: 0 },
         // Sundays in the month — paid, and never part of workingDays

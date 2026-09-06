@@ -16,7 +16,10 @@ const teacherAttendanceSchema = new mongoose.Schema(
 
         status: {
             type: String,
-            enum: ['Present', 'Absent', 'HalfDay', 'Leave', 'Holiday'],
+            // 'Late' is a PRESENT day — the teacher came. It costs nothing on
+            // its own; only the count above the teacher's allowance is charged,
+            // and that happens in salary.service, not here.
+            enum: ['Present', 'Late', 'Absent', 'HalfDay', 'Leave', 'Holiday'],
             required: true,
         },
         note: { type: String, default: '' },

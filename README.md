@@ -120,14 +120,29 @@ The salary rule is currently:
 
 ```
 perDayRate  = monthlySalary ÷ days in the month   (31 / 30 / 28)
-payableDays = Present + (HalfDay × 0.5) + Leave + Sundays + Holidays
+lateCut     = max(0, Late − teacher.lateAllowance) ÷ 4        (in days)
+payableDays = Present + Late + (HalfDay × 0.5) + Leave + Sundays + Holidays − lateCut
 earned      = perDayRate × payableDays
 netPayable  = earned + adjustments(Add) − adjustments(Deduct) − advance
 ```
 
 Sundays and school holidays are **paid** and are added automatically from the
 calendar — nobody marks a Sunday, and marking one by mistake changes nothing.
-Only `Absent` (full) and `HalfDay` (half) reduce the pay.
+Only `Absent` (full), `HalfDay` (half) and late arrivals above the allowance
+reduce the pay.
+
+**Late arrivals.** A `Late` is a *present* day — the teacher came — so the day
+itself is paid in full. Each teacher carries their own monthly allowance
+(`Teacher.lateAllowance`, set when the teacher is added); the lates inside it
+cost nothing, and every **4 lates above it cost one day's pay** — so two
+excess lates are half a day and four are exactly one Absent. With an allowance
+of 4 and 8 lates marked, 4 are forgiven and the other 4 cost one day.
+
+The allowance is snapshot onto the slip (`lateAllowed`) along with the raw
+count, the charged count and the resulting deduction, so raising somebody's
+allowance next month cannot rewrite a slip already generated — and the slip can
+answer "why is a day missing" on its own face. `LATES_PER_DAY` in
+`salary.service.js` is the single place that number lives.
 
 A day that was **never marked is not paid**. That is deliberate: the sheet
 defaults everyone to Present, so the office marks only the exceptions, and a
@@ -136,7 +151,9 @@ be generated at all for a month with no attendance.
 
 Schools vary a lot here — some allow two free absences a month, some have a
 leave quota, some deduct nothing at all, and **`Leave` is currently fully
-paid**. **This is the one calculation every teacher checks personally.**
+paid**. The late allowance is per teacher and defaults to **0** (every late
+counted from the first); the 4-lates-to-a-day conversion is a single constant.
+**This is the one calculation every teacher checks personally.**
 Changing the rule means changing `computeSlip()` in `salary.service.js` and
 nothing else.
 

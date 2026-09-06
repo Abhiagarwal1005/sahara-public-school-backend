@@ -12,6 +12,7 @@ const {
     isValidMonthKey,
     isSundayIST,
     daysInMonthIST,
+    dayOfMonthIST,
 } = require('../utils/istDate');
 
 // ---------------------------------------------------------------------------
@@ -135,8 +136,9 @@ const teacherMonthlyGrid = async (month) => {
     for (const m of marks) {
         const key = m.teacher.toString();
         if (!byTeacher.has(key)) byTeacher.set(key, {});
-        // Day number in IST
-        byTeacher.get(key)[new Date(m.date).getUTCDate()] = m.status;
+        // Day number in IST — NOT getUTCDate() on the raw instant, which
+        // answers the previous day for every IST date (see istDate.js).
+        byTeacher.get(key)[dayOfMonthIST(m.date)] = m.status;
     }
 
     const rows = teachers.map((t) => {
@@ -154,6 +156,9 @@ const teacherMonthlyGrid = async (month) => {
             absent: counts.Absent || 0,
             halfDay: counts.HalfDay || 0,
             leave: counts.Leave || 0,
+            // Shown on the grid so the office can see a late habit building up
+            // before it turns into a deduction on the slip.
+            late: counts.Late || 0,
         };
     });
 

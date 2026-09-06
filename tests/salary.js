@@ -93,6 +93,55 @@ const buildMarks = (month, { sundayStatus = null, overrides = {} } = {}) => {
   ok('Leave was NOT deducted', e.payableDays === 31 - 2 - 0.5);
   ok('Earned ₹9,193.55', e.earned === 9193.55, `₹${e.earned}`);
 
+  // -------------------------------------------------------------------------
+  // LATE ARRIVALS
+  //
+  // A late day is still a day worked, so it is paid in full. Only the count
+  // ABOVE the teacher's own allowance is charged, and there every 4 lates cost
+  // one day — so 4 excess lates come to exactly the same money as one Absent,
+  // and 2 come to a HalfDay. Days 2, 9, 16, 23 and 30 are Sundays in this
+  // month, so the overrides below deliberately avoid them.
+  // -------------------------------------------------------------------------
+  const lateOn = (days) => buildMarks(MONTH, {
+    overrides: Object.fromEntries(days.map((d) => [d, 'Late'])),
+  });
+  const punctual = { ...teacher, lateAllowance: 4 };
+
+  section('Late arrivals inside the allowance — free');
+  const l4 = salaryService.computeSlip({ teacher: punctual, month: MONTH, marks: lateOn([1, 3, 4, 5]) });
+  ok('4 lates counted', l4.lateDays === 4, `${l4.lateDays}`);
+  ok('4 allowed, so 0 charged', l4.lateChargeable === 0, `${l4.lateChargeable}`);
+  ok('Nothing deducted', l4.lateDeductionDays === 0, `${l4.lateDeductionDays}`);
+  ok('Still exactly ₹10,000', l4.earned === 10000, `₹${l4.earned}`);
+  ok('A late day is not an unmarked day', l4.unmarkedDays === 0, `${l4.unmarkedDays}`);
+
+  section('8 lates against an allowance of 4 — one day');
+  const l8 = salaryService.computeSlip({ teacher: punctual, month: MONTH, marks: lateOn([1, 3, 4, 5, 6, 7, 8, 10]) });
+  ok('8 lates, 4 allowed, 4 charged', l8.lateDays === 8 && l8.lateAllowed === 4 && l8.lateChargeable === 4);
+  ok('4 charged lates = 1 day', l8.lateDeductionDays === 1, `${l8.lateDeductionDays}`);
+  ok('Payable 30 (31 − 1)', l8.payableDays === 30, `${l8.payableDays}`);
+  ok('Costs the same as one Absent',
+     l8.earned === salaryService.computeSlip({ teacher: punctual, month: MONTH, marks: buildMarks(MONTH, { overrides: { 3: 'Absent' } }) }).earned,
+     `₹${l8.earned}`);
+
+  section('6 lates against an allowance of 4 — half a day');
+  const l6 = salaryService.computeSlip({ teacher: punctual, month: MONTH, marks: lateOn([1, 3, 4, 5, 6, 7]) });
+  ok('2 charged', l6.lateChargeable === 2, `${l6.lateChargeable}`);
+  ok('2 charged lates = half a day', l6.lateDeductionDays === 0.5, `${l6.lateDeductionDays}`);
+  ok('Payable 30.5', l6.payableDays === 30.5, `${l6.payableDays}`);
+  ok('Costs the same as one HalfDay',
+     l6.earned === salaryService.computeSlip({ teacher: punctual, month: MONTH, marks: buildMarks(MONTH, { overrides: { 3: 'HalfDay' } }) }).earned,
+     `₹${l6.earned}`);
+
+  section('No allowance set — every late counts from the first');
+  const l0 = salaryService.computeSlip({ teacher, month: MONTH, marks: lateOn([1, 3, 4, 5]) });
+  ok('Allowance defaults to 0', l0.lateAllowed === 0, `${l0.lateAllowed}`);
+  ok('All 4 charged = 1 day', l0.lateDeductionDays === 1, `${l0.lateDeductionDays}`);
+
+  section('The allowance is a snapshot, like the salary');
+  ok('Raising it later cannot rewrite this slip — the value is stored on it',
+     l8.lateAllowed === 4 && l4.lateAllowed === 4 && l0.lateAllowed === 0);
+
   section('A school holiday (15 Aug) is paid, and is not a working day');
   const f = salaryService.computeSlip({ teacher, month: MONTH, marks: buildMarks(MONTH, { overrides: { 15: 'Holiday' } }) });
   ok('Divisor unchanged at 31', f.monthDays === 31, `${f.monthDays}`);

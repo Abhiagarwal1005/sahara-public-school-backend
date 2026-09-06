@@ -10,7 +10,7 @@ const list = async (query = {}) => {
 
     // From the status + nameLower index — both filter and sort
     return Teacher.find(filter)
-        .select('employeeCode name phone designation monthlySalary joiningDate status')
+        .select('employeeCode name phone designation monthlySalary lateAllowance joiningDate status')
         .sort({ nameLower: 1 })
         .lean();
 };

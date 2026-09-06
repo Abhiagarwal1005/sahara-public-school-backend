@@ -56,6 +56,25 @@ const updatePermissionsSchema = z.object({
         ),
 });
 
+// History filters. Everything optional — an unfiltered call is the default
+// view, and an empty string from a <select> means "no filter", not a bad one.
+const listAuditSchema = z.object({
+    page: z.coerce.number().int().positive().optional(),
+    limit: z.coerce.number().int().positive().max(100).optional(),
+    entity: z.string().trim().max(40).optional().or(z.literal('')).transform((v) => v || undefined),
+    entityId: z.union([objectId, z.literal('')]).optional().transform((v) => v || undefined),
+    actor: z.union([objectId, z.literal('')]).optional().transform((v) => v || undefined),
+    // A module prefix ('fee') or a full key ('fee.discount')
+    action: z.string().trim().max(40).optional().or(z.literal('')).transform((v) => v || undefined),
+    from: z.coerce.date().optional(),
+    to: z.coerce.date().optional(),
+});
+
+const entityHistoryParamsSchema = z.object({
+    entity: z.string().trim().min(2).max(40),
+    id: objectId,
+});
+
 const idParamSchema = z.object({ id: objectId });
 
 module.exports = {
@@ -64,5 +83,7 @@ module.exports = {
     createUserSchema,
     updateUserSchema,
     updatePermissionsSchema,
+    listAuditSchema,
+    entityHistoryParamsSchema,
     idParamSchema,
 };

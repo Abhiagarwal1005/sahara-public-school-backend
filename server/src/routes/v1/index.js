@@ -36,5 +36,6 @@ router.use('/salary', require('./salary.routes'));
 router.use('/expenses', require('./expense.routes'));
 router.use('/reports', require('./report.routes'));
 router.use('/uploads', require('./upload.routes'));
+router.use('/audit', require('./audit.routes'));
 
 module.exports = router;

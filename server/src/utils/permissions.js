@@ -70,6 +70,11 @@ const PERMISSIONS = [
     { module: 'System', key: 'user.manage', label: 'Create / deactivate users' },
     { module: 'System', key: 'session.manage', label: 'Manage academic session' },
     { module: 'System', key: 'permission.manage', label: 'Manage role permissions' },
+    // Who changed what. Not in DEFAULT_GRANTS — Admin has it because Admin has
+    // everything, and can hand it to the Principal from Settings if the school
+    // wants that. It is deliberately grantable: the history is a management
+    // tool, not a secret.
+    { module: 'System', key: 'audit.view', label: 'View edit history' },
 ];
 
 const PERMISSION_KEYS = new Set(PERMISSIONS.map((p) => p.key));

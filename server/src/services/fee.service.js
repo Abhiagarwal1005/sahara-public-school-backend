@@ -260,7 +260,16 @@ const collect = async ({ studentId, amount, mode, txnDate, note = '' }, actor) =
                     update: { $inc: { paidAmount: take }, $set: { status: statusFor(next) } },
                 },
             });
-            covered.push({ month: d.month, amount: take, className: d.className, class: d.class });
+            // `demand` is what makes a void exact — the rest is for the printed
+            // receipt. Only demand/month/amount are stored on the transaction
+            // (the schema drops the others).
+            covered.push({
+                demand: d._id,
+                month: d.month,
+                amount: take,
+                className: d.className,
+                class: d.class,
+            });
         });
 
         await FeeDemand.bulkWrite(demandOps, { session: mongoSession, ordered: true });
@@ -286,8 +295,16 @@ const collect = async ({ studentId, amount, mode, txnDate, note = '' }, actor) =
                 classId: student.class,
                 className: student.className,
                 refModel: 'FeeDemand',
-                refId: covered[0]?.class ? demands[0]._id : null,
+                refId: covered[0]?.demand || null,
                 receiptNo,
+                // The allocation this receipt made, so voidReceipt reverses
+                // exactly these months rather than guessing. See
+                // transaction.model.js for what went wrong without it.
+                covered: covered.map((c) => ({
+                    demand: c.demand,
+                    month: c.month,
+                    amount: c.amount,
+                })),
                 note,
                 recordedBy: actor.id,
             },
@@ -367,6 +384,100 @@ const applyDiscount = async (demandId, { amount, reason }, actor) => {
     });
 };
 
+// One demand giving money back. Status is recomputed from the demand's own
+// numbers, so it can never contradict them.
+const unwindOp = (demand, take) => {
+    const next = { ...demand, paidAmount: round2((demand.paidAmount || 0) - take) };
+    return {
+        updateOne: {
+            filter: { _id: demand._id },
+            update: { $inc: { paidAmount: -take }, $set: { status: statusFor(next) } },
+        },
+    };
+};
+
+// ---------------------------------------------------------------------------
+// Which demands give the money back when a receipt is voided.
+//
+// A receipt now records the allocation it made (Transaction.covered), so this
+// is the exact inverse of that collection — the months THIS receipt paid, and
+// nothing else.
+//
+// It used to unwind the student's newest paid months instead, on the reasoning
+// that collection allocates oldest-first so a void should run newest-first.
+// That is the exact inverse only while the student has ONE receipt. With two,
+// voiding the older one took the money back off the months the NEWER one had
+// paid: April/May stayed 'Paid' with their money gone, June/July flipped to
+// 'Unpaid' with a valid receipt behind them. Every total still agreed — the
+// student's outstanding, the rollups, recomputeBalances — because only the
+// attribution was wrong, which is exactly why it could sit there unnoticed.
+// ---------------------------------------------------------------------------
+const unwindReceipt = async (txn, mongoSession) => {
+    const ops = [];
+    const done = [];
+    let reversed = 0;
+
+    if (txn.covered?.length) {
+        const demands = await FeeDemand.find({ _id: { $in: txn.covered.map((c) => c.demand) } })
+            .session(mongoSession)
+            .lean();
+
+        const byId = new Map(demands.map((d) => [String(d._id), d]));
+
+        for (const line of txn.covered) {
+            const demand = byId.get(String(line.demand));
+            // The demand is gone — nothing to unwind here. The shortfall is
+            // picked up below so the student's balance still adds up.
+            if (!demand) continue;
+
+            // Clamped: a demand cannot give back more than it currently holds.
+            // Normally that is the full line, but a receipt voided under the
+            // old guess could have already moved money off this demand, and a
+            // negative paidAmount is worse than a short reversal.
+            const take = round2(Math.min(line.amount, demand.paidAmount || 0));
+            if (take <= 0) continue;
+
+            reversed = round2(reversed + take);
+            done.push(demand._id);
+            ops.push(unwindOp(demand, take));
+        }
+    }
+
+    // Whatever the allocation could not account for. For a receipt written
+    // before `covered` existed that is the entire amount, and this is the old
+    // newest-first behaviour — kept so those receipts stay voidable at all.
+    // For a newer one it is a shortfall from the cases above.
+    //
+    // It has to be covered somehow: Student.feeOutstanding goes up by the full
+    // receipt amount below, so if the demands gave back less, the student's
+    // balance and the sum of their dues would disagree — and that IS drift
+    // recomputeBalances would report.
+    let remaining = round2(txn.amount - reversed);
+
+    if (remaining > 0) {
+        const others = await FeeDemand.find({
+            student: txn.party.ref,
+            paidAmount: { $gt: 0 },
+            _id: { $nin: done },
+        })
+            .sort({ month: -1 })
+            .session(mongoSession)
+            .lean();
+
+        for (const demand of others) {
+            if (remaining <= 0) break;
+
+            const take = round2(Math.min(remaining, demand.paidAmount));
+            if (take <= 0) continue;
+
+            remaining = round2(remaining - take);
+            ops.push(unwindOp(demand, take));
+        }
+    }
+
+    return ops;
+};
+
 // ---------------------------------------------------------------------------
 // Voiding a wrong receipt. The original is never deleted — it is marked
 // void and an opposing entry is written. The money goes back onto the
@@ -381,31 +492,7 @@ const voidReceipt = async (transactionId, reason, actor) => {
     if (txn.voided) throw new ApiError(409, 'This receipt has already been voided');
 
     return withTransaction(async (mongoSession) => {
-        // Take the money back off the demands that receipt covered —
-        // newest first, so it is the exact inverse of the allocation.
-        let remaining = txn.amount;
-
-        const paidDemands = await FeeDemand.find({
-            student: txn.party.ref,
-            paidAmount: { $gt: 0 },
-        })
-            .sort({ month: -1 })
-            .session(mongoSession);
-
-        const ops = [];
-        for (const d of paidDemands) {
-            if (remaining <= 0) break;
-            const take = round2(Math.min(remaining, d.paidAmount));
-            remaining = round2(remaining - take);
-
-            const next = { ...d.toObject(), paidAmount: round2(d.paidAmount - take) };
-            ops.push({
-                updateOne: {
-                    filter: { _id: d._id },
-                    update: { $inc: { paidAmount: -take }, $set: { status: statusFor(next) } },
-                },
-            });
-        }
+        const ops = await unwindReceipt(txn, mongoSession);
 
         if (ops.length) await FeeDemand.bulkWrite(ops, { session: mongoSession, ordered: true });
 

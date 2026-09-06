@@ -65,6 +65,31 @@ const transactionSchema = new mongoose.Schema(
         refId: { type: mongoose.Schema.Types.ObjectId, default: null },
 
         receiptNo: { type: String, default: null }, // on fee receipts only
+
+        // ---- what this receipt actually paid ----
+        //
+        // Collection allocates across several months (oldest first), and until
+        // this existed that breakdown was returned to the browser for the
+        // printed receipt and then thrown away. Voiding therefore had to GUESS
+        // which months to unwind — it took the money back off the student's
+        // newest paid months, which is the exact inverse only while the student
+        // has ONE receipt. With two, voiding the older one clawed money back
+        // off the months the NEWER one had paid: the totals still agreed (so
+        // recomputeBalances reported no drift), but every month's status was
+        // wrong on the screen.
+        //
+        // Storing the allocation makes a void the exact inverse of its own
+        // collection, by construction. Empty on non-fee rows, and on fee rows
+        // written before this field existed — voidReceipt falls back for those.
+        covered: [
+            {
+                demand: { type: mongoose.Schema.Types.ObjectId, ref: 'FeeDemand', required: true },
+                month: { type: String, required: true }, // "2026-08"
+                amount: { type: Number, required: true, min: 0 },
+                _id: false,
+            },
+        ],
+
         note: { type: String, default: '' },
         attachments: [
             {

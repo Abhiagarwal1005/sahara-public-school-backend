@@ -8,6 +8,9 @@ const createTeacherSchema = z.object({
     phone: phone.optional().or(z.literal('')),
     designation: z.string().trim().max(60).optional().or(z.literal('')),
     monthlySalary: positiveMoney,
+    // Late arrivals forgiven per month. Capped at 31 — a number above that is
+    // a typo, not a policy.
+    lateAllowance: z.number().int().nonnegative().max(31).optional(),
     joiningDate: dateish,
     bankDetails: z
         .object({
@@ -28,7 +31,7 @@ const markTeacherAttendanceSchema = z.object({
         .array(
             z.object({
                 teacher: objectId,
-                status: z.enum(['Present', 'Absent', 'HalfDay', 'Leave', 'Holiday']),
+                status: z.enum(['Present', 'Late', 'Absent', 'HalfDay', 'Leave', 'Holiday']),
                 note: z.string().trim().max(120).optional().or(z.literal('')),
             })
         )

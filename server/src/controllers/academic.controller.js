@@ -4,6 +4,11 @@ const sessionService = require('../services/session.service');
 const classService = require('../services/class.service');
 const studentService = require('../services/student.service');
 const audit = require('../services/audit.service');
+// Only for the BEFORE snapshot on an edit — the write itself stays in the
+// service. See audit.service.js for why the snapshot is taken here.
+const AcademicSession = require('../models/academicSession.model');
+const SchoolClass = require('../models/schoolClass.model');
+const Student = require('../models/student.model');
 
 // ---- academic session ----
 
@@ -19,6 +24,15 @@ const getActiveSession = asyncHandler(async (_req, res) => {
 
 const createSession = asyncHandler(async (req, res) => {
     const data = await sessionService.create(req.body);
+
+    audit.logCreate(req, {
+        action: 'session.create',
+        entity: 'AcademicSession',
+        entityId: data._id,
+        label: `${data.name} created`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Session created'));
 });
 
@@ -37,7 +51,18 @@ const activateSession = asyncHandler(async (req, res) => {
 });
 
 const updateSession = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(AcademicSession, req.params.id, 'AcademicSession');
     const data = await sessionService.update(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'session.update',
+        entity: 'AcademicSession',
+        entityId: data._id,
+        label: data.name,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Session updated'));
 });
 
@@ -54,16 +79,47 @@ const listClasses = asyncHandler(async (req, res) => {
 
 const createClass = asyncHandler(async (req, res) => {
     const data = await classService.create(req.body);
+
+    audit.logCreate(req, {
+        action: 'class.create',
+        entity: 'SchoolClass',
+        entityId: data._id,
+        label: `${data.name} – ${data.section} created at ₹${data.monthlyFee}/month`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Class created'));
 });
 
+// The monthly fee is edited straight from a cell on the Settings screen, so
+// this is the one place that answers "who put this class on ₹1,200".
 const updateClass = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(SchoolClass, req.params.id, 'SchoolClass');
     const data = await classService.update(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'class.update',
+        entity: 'SchoolClass',
+        entityId: data._id,
+        label: `${data.name} – ${data.section}`,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Class updated'));
 });
 
 const deactivateClass = asyncHandler(async (req, res) => {
     const data = await classService.deactivate(req.params.id);
+
+    audit.logDelete(req, {
+        action: 'class.deactivate',
+        entity: 'SchoolClass',
+        entityId: data._id,
+        label: `${data.name} – ${data.section} deactivated`,
+        before: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Class deactivated'));
 });
 
@@ -86,11 +142,34 @@ const getStudentLedger = asyncHandler(async (req, res) => {
 
 const createStudent = asyncHandler(async (req, res) => {
     const data = await studentService.create(req.body, req.userId);
+
+    audit.logCreate(req, {
+        action: 'student.create',
+        entity: 'Student',
+        entityId: data._id,
+        label: `${data.name} (${data.admissionNo}) admitted to ${data.className} at ₹${data.monthlyFee}/month`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Student added'));
 });
 
+// A class change and a fee change both land here, and both are questions
+// somebody gets asked later — "why is this child on ₹800" and "when did they
+// move to 6-B". The before/after answers them with a name against it.
 const updateStudent = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(Student, req.params.id, 'Student');
     const data = await studentService.update(req.params.id, req.body, req.userId);
+
+    audit.logEdit(req, {
+        action: 'student.update',
+        entity: 'Student',
+        entityId: data._id,
+        label: `${data.name} (${data.admissionNo})`,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Student updated'));
 });
 
@@ -102,7 +181,7 @@ const markStudentLeft = asyncHandler(async (req, res) => {
         action: 'student.left',
         entity: 'Student',
         entityId: req.params.id,
-        summary: `School chhoda - outstanding ₹${data.outstandingCarried}`,
+        summary: `${data.student.name} (${data.student.admissionNo}) marked as Left — ₹${data.outstandingCarried} still outstanding`,
     });
 
     return res.status(200).json(new ApiResponse(200, data, 'Student marked as Left'));

@@ -16,6 +16,12 @@ const teacherSchema = new mongoose.Schema(
         // slip.
         monthlySalary: { type: Number, required: true, min: 0 },
 
+        // How many late arrivals a month are forgiven. Lates inside this cost
+        // nothing; above it every 4 lates cost a day's pay (see
+        // salary.service.computeSlip). Per teacher, because seniority and
+        // distance from school are exactly why one blanket number does not work.
+        lateAllowance: { type: Number, default: 0, min: 0 },
+
         joiningDate: { type: Date, required: true },
         status: { type: String, enum: ['Active', 'Left'], default: 'Active' },
         leftAt: { type: Date, default: null },

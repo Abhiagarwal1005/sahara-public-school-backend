@@ -4,6 +4,9 @@ const expenseService = require('../services/expense.service');
 const reportService = require('../services/report.service');
 const uploadService = require('../services/upload.service');
 const audit = require('../services/audit.service');
+// Only for the BEFORE snapshot on an edit — the write stays in the service.
+const Expense = require('../models/expense.model');
+const ExpenseCategory = require('../models/expenseCategory.model');
 
 // ---- expenses ----
 
@@ -15,16 +18,45 @@ const listCategories = asyncHandler(async (_req, res) => {
 
 const createCategory = asyncHandler(async (req, res) => {
     const data = await expenseService.createCategory(req.body, req.userId);
+
+    audit.logCreate(req, {
+        action: 'expense.categoryCreate',
+        entity: 'ExpenseCategory',
+        entityId: data._id,
+        label: `${data.name} added`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Category created'));
 });
 
 const updateCategory = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(ExpenseCategory, req.params.id, 'ExpenseCategory');
     const data = await expenseService.updateCategory(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'expense.categoryUpdate',
+        entity: 'ExpenseCategory',
+        entityId: data._id,
+        label: data.name,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Category updated'));
 });
 
 const createExpense = asyncHandler(async (req, res) => {
     const data = await expenseService.create(req.body, req.userId);
+
+    audit.logCreate(req, {
+        action: 'expense.create',
+        entity: 'Expense',
+        entityId: data._id,
+        label: `${data.title} — ₹${data.amount} (${data.categoryName}, ${data.mode})`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Expense recorded'));
 });
 
@@ -38,8 +70,22 @@ const getExpense = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, data, 'Expense'));
 });
 
+// The amount and the date are frozen (expense.service refuses them) — a wrong
+// amount is deleted and re-entered, which writes a reversal. What is editable
+// is the title, who it was paid to, the note and the photo.
 const updateExpense = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(Expense, req.params.id, 'Expense');
     const data = await expenseService.update(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'expense.update',
+        entity: 'Expense',
+        entityId: data._id,
+        label: `${data.title} — ₹${data.amount}`,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Expense updated'));
 });
 

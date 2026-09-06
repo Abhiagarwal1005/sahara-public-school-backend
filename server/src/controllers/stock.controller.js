@@ -3,6 +3,8 @@ const ApiResponse = require('../utils/ApiResponse');
 const stockService = require('../services/stock.service');
 const saleService = require('../services/sale.service');
 const audit = require('../services/audit.service');
+// Only for the BEFORE snapshot on an edit — the write stays in the service.
+const StockItem = require('../models/stockItem.model');
 
 // ---- items ----
 
@@ -18,11 +20,33 @@ const getItem = asyncHandler(async (req, res) => {
 
 const createItem = asyncHandler(async (req, res) => {
     const data = await stockService.createItem(req.body, req.userId);
+
+    audit.logCreate(req, {
+        action: 'stock.itemCreate',
+        entity: 'StockItem',
+        entityId: data._id,
+        label: `${data.name} (${data.category}) added`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Item added'));
 });
 
+// A price change here decides what every future sale charges, and it leaves
+// no other trace — a sale records the rate it used, not who set it.
 const updateItem = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(StockItem, req.params.id, 'StockItem');
     const data = await stockService.updateItem(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'stock.itemUpdate',
+        entity: 'StockItem',
+        entityId: data._id,
+        label: data.name,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Item updated'));
 });
 
@@ -54,6 +78,15 @@ const lowStock = asyncHandler(async (_req, res) => {
 
 const createSale = asyncHandler(async (req, res) => {
     const data = await saleService.create(req.body, req.userId);
+
+    audit.logCreate(req, {
+        action: 'sale.create',
+        entity: 'StockSale',
+        entityId: data._id,
+        label: `Bill ${data.billNo} — ${data.studentName}, ₹${data.total}`
+            + `${data.dueAmount > 0 ? ` (₹${data.dueAmount} on credit)` : ''}`,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Bill created'));
 });
 

@@ -4,6 +4,9 @@ const teacherService = require('../services/teacher.service');
 const attendanceService = require('../services/attendance.service');
 const salaryService = require('../services/salary.service');
 const audit = require('../services/audit.service');
+// Only for the BEFORE snapshot on an edit — the write stays in the service.
+const Teacher = require('../models/teacher.model');
+const SalarySlip = require('../models/salarySlip.model');
 
 // ---- teachers ----
 
@@ -19,27 +22,48 @@ const getTeacher = asyncHandler(async (req, res) => {
 
 const createTeacher = asyncHandler(async (req, res) => {
     const data = await teacherService.create(req.body, req.userId);
+
+    audit.logCreate(req, {
+        action: 'teacher.create',
+        entity: 'Teacher',
+        entityId: data._id,
+        label: `${data.name} (${data.employeeCode}) joined at ₹${data.monthlySalary}/month`,
+        after: data,
+    });
+
     return res.status(201).json(new ApiResponse(201, data, 'Teacher added'));
 });
 
+// Salary and lateAllowance both change what a future slip pays, so both are
+// worth a name and a date against them. This used to log a salary change only,
+// and only as a sentence — now every tracked field carries its before/after.
 const updateTeacher = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(Teacher, req.params.id, 'Teacher');
     const data = await teacherService.update(req.params.id, req.body);
 
-    if (req.body.monthlySalary !== undefined) {
-        audit.log({
-            ...audit.fromRequest(req),
-            action: 'teacher.salaryChange',
-            entity: 'Teacher',
-            entityId: data._id,
-            summary: `${data.name} ki salary ab ₹${data.monthlySalary}`,
-        });
-    }
+    audit.logEdit(req, {
+        action: req.body.monthlySalary !== undefined ? 'teacher.salaryChange' : 'teacher.update',
+        entity: 'Teacher',
+        entityId: data._id,
+        label: `${data.name} (${data.employeeCode})`,
+        before,
+        after: data,
+    });
 
     return res.status(200).json(new ApiResponse(200, data, 'Teacher updated'));
 });
 
 const markTeacherLeft = asyncHandler(async (req, res) => {
     const data = await teacherService.markLeft(req.params.id);
+
+    audit.logDelete(req, {
+        action: 'teacher.left',
+        entity: 'Teacher',
+        entityId: data._id,
+        label: `${data.name} (${data.employeeCode}) marked as Left`,
+        before: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Teacher marked as Left'));
 });
 
@@ -50,8 +74,20 @@ const teacherSheet = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, data, 'Attendance sheet'));
 });
 
+// Attendance drives payroll, so a correction made after a slip was generated
+// is exactly the kind of change somebody asks about later. The individual
+// marks are not copied — the sheet is the record; this says who saved it.
 const markTeacherAttendance = asyncHandler(async (req, res) => {
     const data = await attendanceService.markTeachers(req.body, req.userId);
+
+    audit.log({
+        ...audit.fromRequest(req),
+        action: 'attendance.teacher.mark',
+        entity: 'TeacherAttendance',
+        summary: `${data.saved} teachers marked for ${new Date(data.date).toISOString().slice(0, 10)}`
+            + ` (${data.inserted} new, ${data.updated} changed)`,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Attendance saved'));
 });
 
@@ -67,6 +103,15 @@ const classSheet = asyncHandler(async (req, res) => {
 
 const markClassAttendance = asyncHandler(async (req, res) => {
     const data = await attendanceService.markClasses(req.body, req.userId);
+
+    audit.log({
+        ...audit.fromRequest(req),
+        action: 'attendance.class.mark',
+        entity: 'ClassAttendance',
+        summary: `${data.saved} classes marked for ${new Date(data.date).toISOString().slice(0, 10)}`
+            + ` (${data.inserted} new, ${data.updated} changed)`,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Attendance saved'));
 });
 
@@ -101,7 +146,18 @@ const getSlip = asyncHandler(async (req, res) => {
 });
 
 const updateSlip = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(SalarySlip, req.params.id, 'SalarySlip');
     const data = await salaryService.update(req.params.id, req.body);
+
+    audit.logEdit(req, {
+        action: 'salary.update',
+        entity: 'SalarySlip',
+        entityId: data._id,
+        label: `${data.teacherName} — ${data.month}`,
+        before,
+        after: data,
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Slip updated'));
 });
 
@@ -120,8 +176,23 @@ const addAdjustment = asyncHandler(async (req, res) => {
     return res.status(201).json(new ApiResponse(201, data, 'Adjustment added'));
 });
 
+// Adding a line is already logged; removing one has to be too, or a bonus
+// could be added and quietly taken away with only half the trail.
 const removeAdjustment = asyncHandler(async (req, res) => {
+    const before = await audit.snapshot(SalarySlip, req.params.id, 'SalarySlip');
     const data = await salaryService.removeAdjustment(req.params.id, req.params.adjustmentId);
+
+    audit.log({
+        ...audit.fromRequest(req),
+        action: 'salary.adjustRemove',
+        entity: 'SalarySlip',
+        entityId: data._id,
+        summary: `${data.teacherName} — ${data.month}: a line was removed,`
+            + ` net ₹${before?.netPayable ?? '?'} → ₹${data.netPayable}`,
+        before: { netPayable: before?.netPayable ?? null },
+        after: { netPayable: data.netPayable },
+    });
+
     return res.status(200).json(new ApiResponse(200, data, 'Adjustment removed'));
 });
 

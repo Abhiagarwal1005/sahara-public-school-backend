@@ -100,6 +100,9 @@ const record = async (payload, mongoSession = null) => {
         refModel = '',
         refId = null,
         receiptNo = null,
+        // Fee receipts pass the per-month breakdown they allocated, so a void
+        // can reverse exactly what this receipt paid. See transaction.model.js.
+        covered = [],
         note = '',
         attachments = [],
         recordedBy,
@@ -131,6 +134,7 @@ const record = async (payload, mongoSession = null) => {
                 refModel,
                 refId,
                 receiptNo,
+                covered,
                 note,
                 attachments,
                 recordedBy,

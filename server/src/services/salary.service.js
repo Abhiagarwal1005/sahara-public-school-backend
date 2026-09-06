@@ -37,8 +37,23 @@ const {
 // defaults everyone to Present, so a normal day is one button: Save.
 //
 // What is paid without being worked: Sunday (weekly off), Holiday (school
-// holiday), Leave (approved, paid). What reduces pay: Absent, and HalfDay
-// at half rate.
+// holiday), Leave (approved, paid). What reduces pay: Absent, HalfDay
+// at half rate, and late arrivals above the allowance (below).
+//
+// LATE ARRIVALS
+//
+// A Late is a PRESENT day — the teacher came — so it is paid in full and
+// counts as a worked day. The cost is separate: each teacher has a monthly
+// allowance (Teacher.lateAllowance), the lates inside it are free, and every
+// LATES_PER_DAY lates ABOVE it cost one day's pay.
+//
+//   lateChargeable    = max(0, Late - allowance)
+//   lateDeductionDays = lateChargeable / 4
+//
+// So with an allowance of 4 and 8 lates marked: 4 are forgiven, the other 4
+// cost exactly one day — the same as one Absent. Two excess lates are half a
+// day. Treating the late day itself as absent instead would charge twice for
+// one late arrival, which is the mistake this split exists to avoid.
 //
 // >>> THIS RULE STILL NEEDS THE CLIENT'S CONFIRMATION. <<<
 // Every school differs — some allow two free absences a month, some have
@@ -46,6 +61,10 @@ const {
 // calculation every teacher checks personally, so an error surfaces
 // immediately. Changing the rule means changing computeSlip() and nothing else.
 // ---------------------------------------------------------------------------
+// Excess lates that add up to one day's pay. The whole late rule is this
+// number plus the per-teacher allowance — change it here and nowhere else.
+const LATES_PER_DAY = 4;
+
 const computeSlip = ({ teacher, marks, month = null, monthDaysOverride = null }) => {
     // Sundays are taken out of the status counting entirely. They are not
     // Present, not Absent, not a Holiday the school declared — they are added
@@ -60,6 +79,7 @@ const computeSlip = ({ teacher, marks, month = null, monthDaysOverride = null })
     );
 
     const presentDays = counts.Present || 0;
+    const lateDays = counts.Late || 0;
     const halfDays = counts.HalfDay || 0;
     const leaveDays = counts.Leave || 0;
     const absentDays = counts.Absent || 0;
@@ -84,10 +104,20 @@ const computeSlip = ({ teacher, marks, month = null, monthDaysOverride = null })
     // Shown on the slip for information only — it is NOT the divisor.
     const workingDays = Math.max(0, monthDays - sundayDays - holidayDays);
 
+    // Late arrivals. The allowance is read off the teacher and snapshot onto
+    // the slip below — raising it next month must not rewrite this one.
+    const lateAllowed = Math.max(0, Math.floor(teacher.lateAllowance || 0));
+    const lateChargeable = Math.max(0, lateDays - lateAllowed);
+    const lateDeductionDays = round2(lateChargeable / LATES_PER_DAY);
+
     // Every day that is actually paid for, from both halves: the days worked
-    // and the days off that carry pay.
+    // and the days off that carry pay. A Late sits with the worked days — the
+    // teacher was there — and the excess is taken off once, at the end.
     const payableDays = round2(
-        presentDays + halfDays * 0.5 + leaveDays + sundayDays + holidayDays
+        Math.max(
+            0,
+            presentDays + lateDays + halfDays * 0.5 + leaveDays + sundayDays + holidayDays - lateDeductionDays
+        )
     );
 
     // Days in the month that nobody accounted for — neither marked nor a
@@ -95,7 +125,9 @@ const computeSlip = ({ teacher, marks, month = null, monthDaysOverride = null })
     // register on the slip, instead of a silent deduction.
     const unmarkedDays = Math.max(
         0,
-        round2(monthDays - sundayDays - (presentDays + halfDays + leaveDays + absentDays + holidayDays))
+        round2(
+            monthDays - sundayDays - (presentDays + lateDays + halfDays + leaveDays + absentDays + holidayDays)
+        )
     );
 
     // The rate is rounded for DISPLAY only; the earning is computed from the
@@ -122,6 +154,11 @@ const computeSlip = ({ teacher, marks, month = null, monthDaysOverride = null })
         absentDays,
         holidayDays,
         unmarkedDays,
+        // Late arrivals: marked, forgiven, charged, and what it cost in days
+        lateDays,
+        lateAllowed,
+        lateChargeable,
+        lateDeductionDays,
         payableDays,
         earned,
     };
@@ -156,7 +193,7 @@ const generate = async ({ month }, actorId) => {
     const session = await sessionService.getActiveSessionName();
 
     const teachers = await Teacher.find({ status: 'Active' })
-        .select('name designation monthlySalary')
+        .select('name designation monthlySalary lateAllowance')
         .lean();
 
     if (!teachers.length) throw new ApiError(400, 'There are no active teachers');
