@@ -18,5 +18,3 @@ const { validateEnv } = require('../server/src/config/env');
 validateEnv();
 
 module.exports = require('../server/app');
-
-//test
