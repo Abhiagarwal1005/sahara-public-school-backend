@@ -202,7 +202,7 @@ const listDemands = async (query) => {
         FeeDemand.find(filter)
             .select('month studentName className amount discount paidAmount status dueDate student class')
             .sort({ month: -1, studentName: 1 }),
-        { page, limit }
+        { page, limit, withTotal: true }
     );
 };
 

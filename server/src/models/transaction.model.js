@@ -15,8 +15,9 @@ const mongoose = require('mongoose');
 // ---------------------------------------------------------------------------
 
 const TYPES = [
-    'FEE', // student ne fee di
-    'STOCK_SALE', // uniform/books becha
+    'FEE', // a student paid their fee
+    'STOCK_SALE', // uniform / books sold
+    'ID_CARD', // student ID card issued and paid for
     'EXPENSE', // any expense
     'SALARY', // salary paid to a teacher
     'VENDOR_PAY', // payment made to a vendor

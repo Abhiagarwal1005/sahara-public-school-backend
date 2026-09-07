@@ -165,7 +165,7 @@ const changePassword = async (userId, { currentPassword, newPassword }) => {
         throw new ApiError(400, 'The new password must be different from the current one');
     }
 
-    user.password = newPassword; // pre-save hook hash karega
+    user.password = newPassword; // the pre-save hook hashes it
     user.mustChangePassword = false;
     await user.save();
 

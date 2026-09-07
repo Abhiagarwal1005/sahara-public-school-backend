@@ -77,6 +77,9 @@ const dashboard = async () => {
             activeStudents: s.total || 0,
         },
         vendors: { outstanding: round2(v.total || 0), count: v.count || 0 },
+        // Its own line, because "how much came in from ID cards" is a question
+        // the school asks separately from fees.
+        idCards: { collected: round2(r.idCardCollected || 0) },
         spend: {
             expenses: round2(r.expenses || 0),
             salaries: round2(r.salaries || 0),
@@ -191,17 +194,23 @@ const incomeVsExpense = async () => {
     const session = await sessionService.getActiveSessionName();
 
     const rows = await MonthlyRollup.find({ session, scope: 'SCHOOL' })
-        .select('month feeCollected stockSales otherIncome expenses salaries vendorPaid cashIn cashOut')
+        .select('month feeCollected stockSales idCardCollected otherIncome expenses salaries vendorPaid cashIn cashOut')
         .sort({ month: 1 })
         .lean();
 
     const months = rows.map((r) => {
-        const income = round2((r.feeCollected || 0) + (r.stockSales || 0) + (r.otherIncome || 0));
+        // Every income head has to be named here. A head that exists in the
+        // rollup but is left out of this sum makes the month's income quietly
+        // too low — which is exactly the kind of wrong number nobody notices.
+        const income = round2(
+            (r.feeCollected || 0) + (r.stockSales || 0) + (r.idCardCollected || 0) + (r.otherIncome || 0)
+        );
         const spend = round2((r.expenses || 0) + (r.salaries || 0) + (r.vendorPaid || 0));
         return {
             month: r.month,
             feeCollected: round2(r.feeCollected || 0),
             stockSales: round2(r.stockSales || 0),
+            idCards: round2(r.idCardCollected || 0),
             otherIncome: round2(r.otherIncome || 0),
             totalIn: income,
             expenses: round2(r.expenses || 0),

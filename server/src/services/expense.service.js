@@ -105,7 +105,7 @@ const list = async (query) => {
         Expense.find(filter)
             .select('title categoryName category amount date mode paidTo attachments')
             .sort({ date: -1 }),
-        { page, limit }
+        { page, limit, withTotal: true }
     );
 };
 

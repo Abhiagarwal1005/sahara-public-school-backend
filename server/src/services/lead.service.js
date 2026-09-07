@@ -43,7 +43,7 @@ const list = async (query = {}) => {
     // the newest enquiry first.
     const sort = query.due === 'true' ? { nextFollowUp: 1 } : { createdAt: -1 };
 
-    return fetchPage(Lead.find(filter).select(LIST_FIELDS).sort(sort), { page, limit });
+    return fetchPage(Lead.find(filter).select(LIST_FIELDS).sort(sort), { page, limit, withTotal: true });
 };
 
 const getById = async (id) => {

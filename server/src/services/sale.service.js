@@ -13,7 +13,7 @@ const { round2, allocate } = require('../utils/money');
 const { startOfDayIST, endOfDayIST } = require('../utils/istDate');
 
 // ---------------------------------------------------------------------------
-// Uniform / books bechna.
+// Selling uniform / books.
 //
 // The key decision here is `paidAmount`. Whatever was paid goes into the
 // cash ledger; whatever was not goes onto the student's stockOutstanding
@@ -192,7 +192,7 @@ const list = async (query) => {
         StockSale.find(filter)
             .select('billNo studentName className total paidAmount dueAmount mode date lines')
             .sort({ date: -1 }),
-        { page, limit }
+        { page, limit, withTotal: true }
     );
 };
 

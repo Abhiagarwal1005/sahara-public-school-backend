@@ -201,7 +201,7 @@ const list = async (query = {}) => {
         if (query.to) filter.createdAt.$lte = new Date(query.to);
     }
 
-    return fetchPage(AuditLog.find(filter).sort({ createdAt: -1 }), { page, limit });
+    return fetchPage(AuditLog.find(filter).sort({ createdAt: -1 }), { page, limit, withTotal: true });
 };
 
 // One record's own history — for a "who changed this student" panel.

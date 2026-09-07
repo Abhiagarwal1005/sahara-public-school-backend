@@ -68,7 +68,7 @@ const listItems = async (query) => {
         StockItem.find(filter)
             .select('name category unit hasVariants sellPrice costPrice currentStock lowStockAt variants isActive image')
             .sort({ nameLower: 1 }),
-        { page, limit }
+        { page, limit, withTotal: true }
     );
 };
 
@@ -140,7 +140,7 @@ const createItem = async (payload, actorId) => {
 
 // Quantity does NOT change here — it moves only through a purchase, a
 // sale or an adjustment. Otherwise somebody would quietly fix a number
-// bolne lagti.
+// and the movement history would start lying.
 const updateItem = async (id, updates) => {
     const item = await StockItem.findById(id);
     if (!item) throw new ApiError(404, 'Item not found');
@@ -211,7 +211,7 @@ const adjust = async ({ itemId, variantId = null, delta, reason }, actorId) => {
 
 const listMovements = async (itemId, query) => {
     const { page, limit } = getPaginationParams(query);
-    return fetchPage(StockMovement.find({ item: itemId }).sort({ date: -1 }), { page, limit });
+    return fetchPage(StockMovement.find({ item: itemId }).sort({ date: -1 }), { page, limit, withTotal: true });
 };
 
 // ---------------------------------------------------------------------------

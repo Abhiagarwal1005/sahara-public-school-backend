@@ -41,6 +41,28 @@ const studentSchema = new mongoose.Schema(
         feeOutstanding: { type: Number, default: 0 },
         stockOutstanding: { type: Number, default: 0 },
 
+        // ---- ID card ----
+        // A flag on the student rather than a collection of its own: there is at
+        // most ONE card per student, the question asked is always "who has not
+        // taken theirs" (a class-wise count), and a flag answers that from the
+        // same index the roster already uses — no join, no aggregation over a
+        // second collection.
+        //
+        // The money is NOT stored here as a balance. `amount` is a record of what
+        // was taken at issue; the cash itself goes through ledger.service like
+        // every other rupee, and `txn` points at that row.
+        idCard: {
+            issued: { type: Boolean, default: false },
+            issuedAt: { type: Date, default: null },
+            amount: { type: Number, default: 0, min: 0 },
+            issuedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+            // The ledger row this collection wrote. Cancelling reverses THIS row,
+            // rather than guessing which transaction belonged to the card —
+            // the same lesson as fee receipts and their covered months.
+            txn: { type: mongoose.Schema.Types.ObjectId, ref: 'Transaction', default: null },
+            note: { type: String, default: '' },
+        },
+
         createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
     },
     { timestamps: true }
@@ -57,6 +79,9 @@ studentSchema.index({ session: 1, status: 1, nameLower: 1 });
 studentSchema.index({ phone: 1 });
 // Defaulters list with no aggregation
 studentSchema.index({ session: 1, status: 1, feeOutstanding: -1 });
+// "Class 5-B — who has not taken their ID card". Equality on session, status
+// and the flag, then class: the count and the list both come off this index.
+studentSchema.index({ session: 1, status: 1, 'idCard.issued': 1, class: 1 });
 
 // so nameLower never has to be set by hand
 studentSchema.pre('validate', function syncNameLower(next) {

@@ -18,6 +18,10 @@ const academicSessionSchema = new mongoose.Schema(
         // Which months fees are raised for. Some schools bill 12 months, some
         // 10 (April–January). This list drives generation.
         feeMonths: { type: [String], default: [] }, // ["2026-04", ...]
+        // What an ID card costs this year. A school-wide default, overridable per
+        // student at issue time (a staff child's card is often free), so the
+        // common case is one number set once and never typed again.
+        idCardFee: { type: Number, default: 0, min: 0 },
         closedAt: { type: Date, default: null },
     },
     { timestamps: true }

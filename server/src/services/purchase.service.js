@@ -194,7 +194,7 @@ const list = async (query) => {
         Purchase.find(filter)
             .select('billNo vendorName vendor billDate total paidAmount dueAmount status billImage')
             .sort({ billDate: -1 }),
-        { page, limit }
+        { page, limit, withTotal: true }
     );
 };
 

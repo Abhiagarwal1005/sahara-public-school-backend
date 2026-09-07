@@ -24,6 +24,7 @@ const { monthKeyIST } = require('../utils/istDate');
 const ROLLUP_MAP = {
     FEE: ['feeCollected', 'cashIn'],
     STOCK_SALE: ['stockSales', 'cashIn'],
+    ID_CARD: ['idCardCollected', 'cashIn'],
     OTHER_IN: ['otherIncome', 'cashIn'],
     EXPENSE: ['expenses', 'cashOut'],
     SALARY: ['salaries', 'cashOut'],

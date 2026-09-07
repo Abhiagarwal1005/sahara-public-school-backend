@@ -15,7 +15,7 @@ const getActiveSession = async () => {
     if (cached) return cached;
 
     const doc = await AcademicSession.findOne({ isActive: true })
-        .select('name startDate endDate feeMonths')
+        .select('name startDate endDate feeMonths idCardFee')
         .lean();
 
     if (!doc) {
@@ -35,7 +35,7 @@ const getActiveSessionName = async () => (await getActiveSession()).name;
 const list = () => AcademicSession.find().sort({ startDate: -1 }).lean();
 
 const create = async (payload) => {
-    const { name, startDate, endDate, feeMonths } = payload;
+    const { name, startDate, endDate, feeMonths, idCardFee } = payload;
 
     if (new Date(endDate) <= new Date(startDate)) {
         throw new ApiError(400, 'End date must be after the start date');
@@ -51,6 +51,7 @@ const create = async (payload) => {
         startDate,
         endDate,
         feeMonths: feeMonths || [],
+        idCardFee: idCardFee || 0,
         isActive: false,
     });
 

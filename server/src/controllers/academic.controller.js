@@ -187,6 +187,51 @@ const markStudentLeft = asyncHandler(async (req, res) => {
     return res.status(200).json(new ApiResponse(200, data, 'Student marked as Left'));
 });
 
+// ---- ID cards ----
+
+// Handing a card over and taking the money is one act, so it is one endpoint.
+const issueIdCard = asyncHandler(async (req, res) => {
+    const actor = { id: req.userId, name: req.user.name, role: req.role };
+    const data = await studentService.issueIdCard(req.params.id, req.body, actor);
+
+    audit.log({
+        ...audit.fromRequest(req),
+        action: 'student.idcard.issue',
+        entity: 'Student',
+        entityId: req.params.id,
+        summary: data.amount > 0
+            ? `${data.name} (${data.admissionNo}) — ID card issued, ₹${data.amount} (${data.mode})`
+            : `${data.name} (${data.admissionNo}) — ID card issued free of charge`,
+        after: { issued: true, amount: data.amount },
+    });
+
+    return res.status(201).json(new ApiResponse(201, data, 'ID card issued'));
+});
+
+const cancelIdCard = asyncHandler(async (req, res) => {
+    const actor = { id: req.userId, name: req.user.name, role: req.role };
+    const data = await studentService.cancelIdCard(req.params.id, req.body.reason, actor);
+
+    audit.log({
+        ...audit.fromRequest(req),
+        action: 'student.idcard.cancel',
+        entity: 'Student',
+        entityId: req.params.id,
+        summary: `${data.name} — ID card cancelled: ${req.body.reason}`
+            + (data.refunded ? ` (₹${data.refunded} reversed)` : ''),
+        before: { issued: true, amount: data.refunded },
+        after: { issued: false },
+    });
+
+    return res.status(200).json(new ApiResponse(200, data, 'ID card cancelled'));
+});
+
+// Class-wise: taken, not taken, and what came in.
+const idCardSummary = asyncHandler(async (_req, res) => {
+    const data = await studentService.idCardSummary();
+    return res.status(200).json(new ApiResponse(200, data, 'ID card summary'));
+});
+
 const defaulters = asyncHandler(async (req, res) => {
     const data = await studentService.defaulters(req.query);
     return res.status(200).json(new ApiResponse(200, data, 'Defaulters'));
@@ -208,5 +253,8 @@ module.exports = {
     createStudent,
     updateStudent,
     markStudentLeft,
+    issueIdCard,
+    cancelIdCard,
+    idCardSummary,
     defaulters,
 };

@@ -16,6 +16,9 @@ const PERMISSIONS = [
     { module: 'Students', key: 'student.create', label: 'Add a student' },
     { module: 'Students', key: 'student.edit', label: 'Edit student / change class' },
     { module: 'Students', key: 'student.delete', label: 'Mark student as left' },
+    // Its own key because it takes money at the counter — the office staff who
+    // hand cards out are not always the people allowed to edit a student.
+    { module: 'Students', key: 'student.idcard', label: 'Issue / cancel ID card' },
 
     // Enquiries that have not become admissions. A module of its own
     // because a lead is connected to nothing else in the app.
@@ -89,7 +92,7 @@ const ADMIN_ONLY = new Set(['permission.manage']);
 // Defaults seeded at install. The Admin can change any of them from the UI.
 const DEFAULT_GRANTS = {
     Principal: [
-        'student.view', 'student.create', 'student.edit', 'student.delete',
+        'student.view', 'student.create', 'student.edit', 'student.delete', 'student.idcard',
         'lead.view', 'lead.manage',
         'class.view', 'class.manage',
         'fee.view', 'fee.generate', 'fee.collect', 'fee.discount', 'fee.void',
@@ -106,7 +109,7 @@ const DEFAULT_GRANTS = {
         'report.dashboard', 'report.fee', 'report.daybook', 'report.outstanding',
     ],
     Accountant: [
-        'student.view', 'student.create', 'student.edit',
+        'student.view', 'student.create', 'student.edit', 'student.idcard',
         'lead.view', 'lead.manage',
         'class.view',
         'fee.view', 'fee.generate', 'fee.collect',

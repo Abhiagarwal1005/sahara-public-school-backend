@@ -30,6 +30,10 @@ const monthlyRollupSchema = new mongoose.Schema(
 
         // Other income
         stockSales: { type: Number, default: 0 },
+        // Its own head rather than folded into otherIncome — the school asks
+        // "how much came in from ID cards" as its own question, and a number
+        // buried inside a bucket cannot answer it.
+        idCardCollected: { type: Number, default: 0 },
         otherIncome: { type: Number, default: 0 },
 
         // Kharche
