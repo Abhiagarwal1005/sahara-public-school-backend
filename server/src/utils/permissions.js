@@ -65,6 +65,16 @@ const PERMISSIONS = [
     { module: 'Expenses', key: 'expense.edit', label: 'Edit an expense' },
     { module: 'Expenses', key: 'expense.delete', label: 'Delete an expense' },
 
+    // Checking collected money off against the cash box. Its own module because
+    // it spans fees, stock and ID cards — every rupee a student hands over —
+    // and because it is an oversight job, not a collection one: the person who
+    // takes the money should not normally be the person who signs it off.
+    //
+    // Not in DEFAULT_GRANTS. Admin holds it because Admin holds everything, and
+    // can pass it to the Principal from Settings. Deliberately grantable — a
+    // school where the Principal does the daily check should not need a deploy.
+    { module: 'Payments', key: 'payment.verify', label: 'Verify collected payments' },
+
     { module: 'Reports', key: 'report.dashboard', label: 'Dashboard' },
     { module: 'Reports', key: 'report.fee', label: 'Class-wise fee report' },
     { module: 'Reports', key: 'report.daybook', label: 'Day book' },

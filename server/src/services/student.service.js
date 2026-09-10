@@ -80,7 +80,10 @@ const getLedger = async (studentId) => {
             'party.ref': studentId,
             voided: false,
         })
-            .select('type amount mode txnDate receiptNo note direction')
+            .select(
+                'type amount mode txnDate receiptNo note direction party voided ' +
+                    'verified verifiedAt verifiedByName'
+            )
             .sort({ txnDate: -1 })
             .limit(100)
             .lean(),
@@ -90,7 +93,8 @@ const getLedger = async (studentId) => {
         student,
         demands,
         sales,
-        payments,
+        // Same flag, same single source as the day book — see report.service.
+        payments: payments.map((p) => ({ ...p, verifiable: Transaction.isVerifiable(p) })),
         // These two numbers are not counted from documents — they are maintained
         // on the Student. That is why this screen is as fast at 3,000 students as
         // at 3000.

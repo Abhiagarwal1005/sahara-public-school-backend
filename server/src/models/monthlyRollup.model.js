@@ -36,7 +36,7 @@ const monthlyRollupSchema = new mongoose.Schema(
         idCardCollected: { type: Number, default: 0 },
         otherIncome: { type: Number, default: 0 },
 
-        // Kharche
+        // Spend
         expenses: { type: Number, default: 0 },
         salaries: { type: Number, default: 0 },
         vendorPaid: { type: Number, default: 0 },

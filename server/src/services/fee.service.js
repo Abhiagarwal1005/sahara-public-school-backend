@@ -22,6 +22,14 @@ const statusFor = (d) => {
 
 const dueOf = (d) => Math.max(0, round2((d.amount || 0) - (d.discount || 0) - (d.paidAmount || 0)));
 
+// A duplicate key can arrive as the error's own code or buried in writeErrors,
+// depending on whether the driver took the bulk path. Both mean the same thing
+// here: the unique index on { student, month } did its job.
+const isDuplicateKey = (err) =>
+    err?.code === 11000 ||
+    (Array.isArray(err?.writeErrors) &&
+        err.writeErrors.some((e) => (e?.code ?? e?.err?.code) === 11000));
+
 // ---------------------------------------------------------------------------
 // Raise the month's fees.
 //
@@ -31,8 +39,10 @@ const dueOf = (d) => Math.max(0, round2((d.amount || 0) - (d.discount || 0) - (d
 // slow connection, or run by two people at once — no student is ever
 // charged twice.
 //
-// Re-running is also useful: students admitted since the last run get
-// their rows now.
+// Re-running is also useful, and is how a mid-session admission is billed for
+// the months that were raised before they joined: press the button again on
+// April and the student admitted in May gets April's row too. Everyone else
+// already has theirs, so nothing about them changes.
 // ---------------------------------------------------------------------------
 const generateMonth = async ({ month, classId = null }, actorId) => {
     if (!isValidMonthKey(month)) throw new ApiError(400, 'Month must be in YYYY-MM format');
@@ -80,13 +90,32 @@ const generateMonth = async ({ month, classId = null }, actorId) => {
         };
     }
 
-    const { start, end } = monthRangeIST(month);
+    const { end } = monthRangeIST(month);
 
+    // -----------------------------------------------------------------------
+    // The admission date does NOT gate this.
+    //
+    // It used to: a student admitted on 2 May got no April demand, however many
+    // times April was raised. That is wrong for this school. The session runs
+    // April to March and a child on the roll is billed for the SESSION, so
+    // somebody who joins in May still owes April.
+    //
+    // Worse than the policy being wrong, the gap was unfixable from the app:
+    // the office would raise April, silently watch that student be skipped, and
+    // have no way left to charge them for it.
+    //
+    // So the OFFICE decides which months are raised and the system stops
+    // second-guessing that from a date. It is still bounded on both sides:
+    // only months in the session's feeMonths can be raised at all, and only
+    // students who are Active right now are billed. Re-running a month is safe
+    // — it adds exactly the students who were missing and touches nobody else.
+    //
+    // Where a back month genuinely should not be charged — a child who really
+    // did join in December — the demand is raised and then WAIVED with a
+    // reason. That leaves a record of the decision and of who made it; never
+    // raising it left none.
+    // -----------------------------------------------------------------------
     const docs = pending
-        // A student admitted AFTER this month gets no demand for it. (A student
-        // admitted mid-month is charged the full fee — the usual school practice;
-        // pro-rata would be a one-line change.)
-        .filter((s) => new Date(s.admissionDate) < end)
         .map((s) => ({
             session: session.name,
             month,
@@ -100,39 +129,77 @@ const generateMonth = async ({ month, classId = null }, actorId) => {
             generatedBy: actorId,
         }));
 
-    if (!docs.length) {
-        return { month, created: 0, skipped: students.length, totalRaised: 0 };
-    }
-
-    let created = [];
+    // -----------------------------------------------------------------------
+    // The demands and the students' balances move together, or not at all.
+    //
+    // These used to be two independent writes. If the process died between
+    // them — a cold start timing out, a dropped connection — the demands
+    // existed while nobody's feeOutstanding had moved, and RE-RUNNING COULD
+    // NOT REPAIR IT: the pre-filter sees those rows, finds nothing pending and
+    // reports "already raised". Every balance stayed short until somebody
+    // happened to run recompute:balances --fix, which nobody would think to do
+    // because nothing on any screen looked wrong.
+    //
+    // Inside a transaction a duplicate key aborts the whole batch instead of
+    // letting the rest through, and that is the safer half of the trade. The
+    // unique index still makes a double charge impossible; the loser of a race
+    // simply writes nothing and is told to press the button again — which
+    // finishes the job, because generation is idempotent by design.
+    //
+    // Size: one month for one school is a few hundred rows, well inside a
+    // transaction's limits and Vercel's 10s. A very large school can pass
+    // classId and raise a class at a time. A timeout aborts cleanly, which is
+    // exactly the failure mode this change is here to guarantee.
+    // -----------------------------------------------------------------------
+    let created;
 
     try {
-        created = await FeeDemand.insertMany(docs, { ordered: false });
+        created = await withTransaction(async (mongoSession) => {
+            const inserted = await FeeDemand.insertMany(docs, { session: mongoSession, ordered: true });
+
+            // Raise each student's outstanding — one bulkWrite, not N updates
+            await Student.bulkWrite(
+                inserted.map((d) => ({
+                    updateOne: { filter: { _id: d.student }, update: { $inc: { feeOutstanding: d.amount } } },
+                })),
+                { session: mongoSession, ordered: false }
+            );
+
+            return inserted;
+        });
     } catch (err) {
-        // ordered:false means the other rows did insert. An 11000 here is
-        // expected (someone else won a race) — part of the design, not an
-        // error. Only duplicate-key is swallowed.
-        if (err.code !== 11000 && err.code !== undefined) throw err;
-        created = err.insertedDocs || [];
+        // Somebody else raised this month in the gap between the pre-filter and
+        // this write. Nothing was committed, so nothing is wrong — their rows
+        // are in, and pressing the button again picks up whatever is genuinely
+        // still missing.
+        if (isDuplicateKey(err)) {
+            return {
+                month,
+                created: 0,
+                skipped: students.length,
+                totalRaised: 0,
+                message:
+                    'These fees were being raised at the same moment from somewhere else — ' +
+                    'press the button again to pick up anything still missing',
+            };
+        }
+        throw err;
     }
 
     if (!created.length) {
         return { month, created: 0, skipped: students.length, totalRaised: 0 };
     }
 
-    // Raise each student's outstanding — one bulkWrite, not N updates
-    await Student.bulkWrite(
-        created.map((d) => ({
-            updateOne: { filter: { _id: d.student }, update: { $inc: { feeOutstanding: d.amount } } },
-        })),
-        { ordered: false }
-    );
-
     // feeExpected is SET from an aggregation rather than $inc'd.
     // Why: if generation half-ran, or rows arrived from elsewhere in a race,
     // an $inc could double count. Generation is not a hot path, so one
     // authoritative aggregation is affordable here — and it always tells
     // the truth.
+    //
+    // Deliberately OUTSIDE the transaction: it is an authoritative $set over
+    // committed data and is safe to re-run at any time, so a failure here is
+    // repaired by the next generate or by recompute:balances — it never needs
+    // to hold the transaction open.
     await recomputeExpected(session.name, month);
 
     return {

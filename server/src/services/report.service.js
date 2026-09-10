@@ -9,6 +9,17 @@ const vendorService = require('./vendor.service');
 const { round2 } = require('../utils/money');
 const { monthKeyIST, startOfDayIST, endOfDayIST } = require('../utils/istDate');
 
+// The modes the office reconciles separately at the end of a day: the cash box
+// is counted, the UPI app is opened, the bank statement is checked, the cheque
+// book is flipped through. They are always shown, even at zero, so the row of
+// tiles keeps a fixed shape somebody can read at a glance.
+//
+// 'Adjustment' is the fifth mode a Transaction can carry and is deliberately
+// NOT in this list — it moves no real money and would read ₹0 every day. It is
+// still added on any day it appears, because a mode that moved money and is
+// missing from the tiles would make them stop adding up to Money in / Money out.
+const RECONCILED_MODES = ['Cash', 'UPI', 'Bank', 'Cheque'];
+
 // ---------------------------------------------------------------------------
 // DASHBOARD
 //
@@ -102,38 +113,72 @@ const daybook = async (dateInput) => {
     const session = await sessionService.getActiveSessionName();
     const date = startOfDayIST(dateInput || new Date());
 
-    const rows = await Transaction.find({
+    const raw = await Transaction.find({
         session,
         txnDate: { $gte: date, $lte: endOfDayIST(date) },
     })
-        .select('type direction amount mode txnDate party note receiptNo voided reversalOf className')
+        .select(
+            'type direction amount mode txnDate party note receiptNo voided reversalOf className ' +
+                'verified verifiedAt verifiedByName'
+        )
         .sort({ txnDate: 1 })
         .lean();
 
-    // Voids and reversals both show — that is correct behaviour. A cash
-    // book chupchaap edit ho silently edited is not a cash book.
-    const totals = rows.reduce(
-        (acc, t) => {
-            if (t.voided) return acc; // a voided row has its own reversal as a separate row
-            const key = t.direction === 'IN' ? 'in' : 'out';
-            acc[key] = round2(acc[key] + t.amount);
-            if (t.mode === 'Cash') {
-                acc[t.direction === 'IN' ? 'cashIn' : 'cashOut'] = round2(
-                    acc[t.direction === 'IN' ? 'cashIn' : 'cashOut'] + t.amount
-                );
-            }
-            return acc;
-        },
-        { in: 0, out: 0, cashIn: 0, cashOut: 0 }
-    );
+    // WHICH rows carry a verification tick is decided in one place — the model —
+    // and sent down as a flag. Letting each screen re-derive "student money in,
+    // not voided" is how the day book and a student's own ledger end up
+    // disagreeing about the same receipt.
+    const rows = raw.map((t) => ({ ...t, verifiable: Transaction.isVerifiable(t) }));
+
+    // ONE pass produces both the day's totals and the same money split by
+    // payment mode. Deriving the cash figures from the same buckets rather than
+    // adding them up a second time is the point: two separate sums over the
+    // same rows is how a cash line and a mode line start disagreeing.
+    //
+    // Voids and reversals both show in `rows` — that is correct behaviour. A
+    // cash book that can be silently edited is not a cash book. But a VOIDED
+    // row is skipped in the arithmetic, because its REVERSAL is a row of its
+    // own carrying the opposite direction; counting both would double it.
+    const modes = new Map(RECONCILED_MODES.map((m) => [m, { mode: m, in: 0, out: 0 }]));
+    let moneyIn = 0;
+    let moneyOut = 0;
+
+    for (const t of rows) {
+        if (t.voided) continue;
+
+        if (!modes.has(t.mode)) modes.set(t.mode, { mode: t.mode, in: 0, out: 0 });
+        const bucket = modes.get(t.mode);
+
+        if (t.direction === 'IN') {
+            bucket.in = round2(bucket.in + t.amount);
+            moneyIn = round2(moneyIn + t.amount);
+        } else {
+            bucket.out = round2(bucket.out + t.amount);
+            moneyOut = round2(moneyOut + t.amount);
+        }
+    }
+
+    // In RECONCILED_MODES order, with any other mode that actually moved money
+    // appended after it.
+    const byMode = [...modes.values()].map((m) => ({ ...m, net: round2(m.in - m.out) }));
+    const cash = modes.get('Cash');
 
     return {
         date,
         rows,
+        // Mode by mode, so the cash box, the UPI app, the bank statement and the
+        // cheque book can each be reconciled on their own instead of against one
+        // combined figure that none of them will ever match.
+        byMode,
         totals: {
-            ...totals,
-            net: round2(totals.in - totals.out),
-            netCash: round2(totals.cashIn - totals.cashOut),
+            in: moneyIn,
+            out: moneyOut,
+            net: round2(moneyIn - moneyOut),
+            // Cash keeps its own named fields: it is the one total somebody
+            // physically counts, and the dashboard's "cash today" line reads it.
+            cashIn: cash.in,
+            cashOut: cash.out,
+            netCash: round2(cash.in - cash.out),
         },
     };
 };

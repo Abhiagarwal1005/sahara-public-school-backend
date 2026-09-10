@@ -43,6 +43,21 @@ const listDemandsSchema = z.object({
     status: z.enum(['Unpaid', 'Partial', 'Paid']).optional(),
 });
 
+// ---- payment verification ----
+
+// Every filter optional: no date means today, no status means the whole day.
+// An empty string comes from a <select> set back to "all" and means "no filter",
+// not "invalid" — so it is turned into undefined rather than rejected.
+const listPaymentsSchema = z.object({
+    ...pagination,
+    date: dateish.optional(),
+    status: z
+        .enum(['all', 'pending', 'verified'])
+        .optional()
+        .or(z.literal(''))
+        .transform((v) => v || undefined),
+});
+
 // ---- expenses ----
 
 const createExpenseSchema = z.object({
@@ -136,6 +151,7 @@ const listPurchasesSchema = z.object({
 });
 
 module.exports = {
+    listPaymentsSchema,
     generateFeesSchema,
     collectFeeSchema,
     discountSchema,

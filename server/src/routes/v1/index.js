@@ -34,6 +34,7 @@ router.use('/teachers', require('./teacher.routes'));
 router.use('/attendance', require('./attendance.routes'));
 router.use('/salary', require('./salary.routes'));
 router.use('/expenses', require('./expense.routes'));
+router.use('/payments', require('./payment.routes'));
 router.use('/reports', require('./report.routes'));
 router.use('/uploads', require('./upload.routes'));
 router.use('/audit', require('./audit.routes'));

@@ -132,7 +132,7 @@ const generateSalary = asyncHandler(async (req, res) => {
         summary: `${data.month}: ${data.created} slips generated`,
     });
 
-    return res.status(200).json(new ApiResponse(200, data, `${data.created} slips ban gayin`));
+    return res.status(200).json(new ApiResponse(200, data, `${data.created} slips generated`));
 });
 
 const listSlips = asyncHandler(async (req, res) => {

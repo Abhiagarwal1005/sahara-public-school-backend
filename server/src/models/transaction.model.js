@@ -111,6 +111,24 @@ const transactionSchema = new mongoose.Schema(
         voidReason: { type: String, default: '' },
         // On REVERSAL rows: which transaction this reverses
         reversalOf: { type: mongoose.Schema.Types.ObjectId, ref: 'Transaction', default: null },
+
+        // ---- verification ----
+        //
+        // An OVERSIGHT layer, not an accounting one. By the time a row exists the
+        // money has moved and the receipt is printed; this only records that
+        // somebody in charge has since checked the entry against the cash box,
+        // the UPI app or the bank statement.
+        //
+        // It deliberately touches NOTHING else. Verifying does not move a
+        // balance, a rollup or a fee demand, and neither does un-verifying —
+        // which is exactly why it is safe to tick and untick. A flag that
+        // changed the books would be a second, quieter way to edit them.
+        verified: { type: Boolean, default: false },
+        verifiedAt: { type: Date, default: null },
+        verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+        // Denormalised, so the tick can say WHO signed it off without a lookup
+        // on every row of the day book.
+        verifiedByName: { type: String, default: '' },
     },
     { timestamps: true }
 );
@@ -138,7 +156,33 @@ transactionSchema.index(
 );
 // All transactions for a source document (needed when voiding)
 transactionSchema.index({ refModel: 1, refId: 1 });
+// The verification queue: "what is still unchecked", newest first. ESR —
+// equality on session and the flag, then the sort. The party/direction filters
+// narrow a set that is already small by then, so they stay out of the key.
+transactionSchema.index({ session: 1, verified: 1, txnDate: -1 });
 
-module.exports =
+const Transaction =
     mongoose.models.Transaction || mongoose.model('Transaction', transactionSchema);
+
+// ---------------------------------------------------------------------------
+// What is worth verifying: money the school took FROM A STUDENT at the counter
+// — a fee, uniform and books, an ID card. Those are the entries somebody signs
+// off against the cash that was actually collected.
+//
+// Money going OUT is not here. An expense, a salary and a vendor payment each
+// already pass through approval steps of their own, and adding a second tick to
+// them would be ceremony rather than control. A REVERSAL is direction OUT, so
+// it falls out of this by itself, and a voided row has nothing left to check.
+//
+// This lives in ONE place, and the services that display a payment send the
+// result down as `verifiable` rather than each screen re-deciding it.
+// ---------------------------------------------------------------------------
+const VERIFIABLE_FILTER = { direction: 'IN', 'party.kind': 'Student', voided: { $ne: true } };
+
+const isVerifiable = (txn) =>
+    Boolean(txn) && txn.direction === 'IN' && txn.party?.kind === 'Student' && txn.voided !== true;
+
+module.exports = Transaction;
 module.exports.TYPES = TYPES;
+module.exports.VERIFIABLE_FILTER = VERIFIABLE_FILTER;
+module.exports.isVerifiable = isVerifiable;

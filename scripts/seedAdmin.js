@@ -40,7 +40,7 @@ const run = async () => {
 
     const seeded = await permissionService.seedDefaults();
     for (const r of seeded) {
-        console.log(`  ${r.created ? 'BANA' : 'PEHLE SE'}  ${r.role}${r.count ? ` (${r.count} permissions)` : ''}`);
+        console.log(`  ${(r.created ? 'CREATED' : 'EXISTS').padEnd(7)}  ${r.role}${r.count ? ` (${r.count} permissions)` : ''}`);
     }
 
     process.exit(0);

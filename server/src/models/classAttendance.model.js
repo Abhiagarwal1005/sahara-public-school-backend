@@ -22,7 +22,7 @@ const classAttendanceSchema = new mongoose.Schema(
 
         // That day's roll strength, as a snapshot. Today's number is used, not
         // whatever it happens to be when the report is opened three months later
-        // add/left ho chuke honge).
+        // (by then students will have joined and left).
         totalStudents: { type: Number, required: true, min: 0 },
         present: { type: Number, required: true, min: 0 },
         // Stored so reports can sum it, but the service always fills it from

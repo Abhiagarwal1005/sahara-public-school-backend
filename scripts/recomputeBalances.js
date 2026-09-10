@@ -165,9 +165,10 @@ const checkStock = async () => {
 };
 
 // ---- rollups ----
-// Rebuilt from the ledger. Voided rows are skipped and REVERSAL rows are
-// applied inversely against their original type — exactly the way
-// ledger.service does it.
+// Rebuilt from the ledger. A voided row is NOT skipped: when it was written it
+// raised the rollup, and its REVERSAL row lowered it again, so counting both is
+// what actually reproduces the live state. A REVERSAL is applied inversely
+// against its original's type — exactly the way ledger.service does it.
 const checkRollups = async (session) => {
     console.log('\nMonthly rollups');
 
@@ -184,9 +185,18 @@ const checkRollups = async (session) => {
                 },
             },
         ]),
+        // The `purchases` head is bumped by purchase.service with
+        // monthKeyIST(billDate). Purchase stores no month field of its own, so
+        // the same IST bucket has to be derived here — Asia/Kolkata is a fixed
+        // +05:30 with no DST, so $dateToString agrees with monthKeyIST exactly.
         Purchase.aggregate([
             { $match: { session } },
-            { $group: { _id: null, total: { $sum: '$total' } } },
+            {
+                $group: {
+                    _id: { $dateToString: { date: '$billDate', format: '%Y-%m', timezone: 'Asia/Kolkata' } },
+                    total: { $sum: '$total' },
+                },
+            },
         ]),
     ]);
 
@@ -234,14 +244,30 @@ const checkRollups = async (session) => {
         bump(d._id.month, d._id.class, d.className, 'feeDiscount', d.discount);
     }
 
+    // A bill's value is not cash, so it never passes through ledger.record — it
+    // has its own head, bumped at SCHOOL scope only (purchase.service passes no
+    // class). Rebuilt the same way.
+    for (const p of purchases) {
+        bump(p._id, null, '', 'purchases', p.total);
+    }
+
     const stored = await MonthlyRollup.find({ session }).lean();
     const storedMap = new Map(
         stored.map((r) => [`${r.month}|${r.scope}|${r.class || 'null'}`, r])
     );
 
+    // EVERY numeric field on MonthlyRollup has to be listed here. A field left
+    // out is never compared, so drift in it is reported as "No drift" — and this
+    // script is the one thing standing behind the denormalised design.
+    // `idCardCollected` and `purchases` were both missing: ID card money still
+    // showed up inside cashIn, so the totals looked right while its own head
+    // could sit wrong indefinitely, and the bill-value head was never rebuilt
+    // at all.
     const FIELDS = [
-        'feeExpected', 'feeCollected', 'feeDiscount', 'stockSales',
-        'otherIncome', 'expenses', 'salaries', 'vendorPaid', 'cashIn', 'cashOut',
+        'feeExpected', 'feeCollected', 'feeDiscount',
+        'stockSales', 'idCardCollected', 'otherIncome',
+        'expenses', 'salaries', 'vendorPaid', 'purchases',
+        'cashIn', 'cashOut',
     ];
 
     const ops = [];
@@ -280,7 +306,6 @@ const checkRollups = async (session) => {
         console.log(`  FIXED  ${ops.length} rollup rows`);
     }
 
-    console.log(`  (purchases total across session: ${round2(purchases[0]?.total || 0)})`);
 };
 
 const run = async () => {
