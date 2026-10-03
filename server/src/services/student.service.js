@@ -331,16 +331,12 @@ const leaveRoster = async (student, { leftAt, reason = '' }, mongoSession) => {
 };
 
 // Never deleted — status becomes Left. The full history is kept.
-const markLeft = async (id, { reason = '', leftAt } = {}) => {
+const markLeft = async (id, { reason = '', leftAt, clearOutstanding = false } = {}) => {
     const student = await Student.findById(id).lean();
     if (!student) throw new ApiError(404, 'Student not found');
 
     const { dues, credit } = balancesOf(student);
 
-    // Already gone. This used to return the bare student document while the
-    // normal path returned { student, outstandingCarried } — so the controller's
-    // audit line read `data.student.name` and threw on the one call that was
-    // supposed to be the harmless no-op.
     if (student.status === 'Left') {
         return { student, outstandingCarried: dues, creditHeld: credit, alreadyLeft: true };
     }
@@ -356,19 +352,132 @@ const markLeft = async (id, { reason = '', leftAt } = {}) => {
             return { student, outstandingCarried: dues, creditHeld: credit, alreadyLeft: true };
         }
 
-        // The outstanding survives — a student leaving is not a way for dues to
-        // disappear. They keep showing on the outstanding report and the
-        // defaulters list, both of which count money owed rather than people on
-        // the roll. And `creditHeld` is the other direction, which is easier to
-        // forget and worse to get wrong: money the school is holding for a child
-        // who has gone is money it owes.
+        let outstandingCleared = 0;
+
+        if (clearOutstanding && dues > 0) {
+            outstandingCleared = await clearStudentOutstanding(student, mongoSession);
+        }
+
         return {
             student: { ...student, status: 'Left', leftAt: leftAt || new Date(), leftReason: reason.trim() },
-            outstandingCarried: dues,
+            outstandingCarried: clearOutstanding ? 0 : dues,
             creditHeld: credit,
+            outstandingCleared,
             alreadyLeft: false,
         };
     });
+};
+
+// ---------------------------------------------------------------------------
+// Write off every rupee a student still owes — fee, charge and stock — in one
+// transaction. Each unpaid or partial fee demand and charge demand gets a
+// discount for whatever is still due, so the audit trail is exactly the same
+// as a manual waiver; the only difference is that they all happen at once and
+// the reason says why.
+// ---------------------------------------------------------------------------
+const Charge = require('../models/charge.model');
+
+const clearStudentOutstanding = async (student, mongoSession) => {
+    const REASON = 'Cleared on leaving';
+    let totalCleared = 0;
+
+    // ---- fee demands ----
+    const feeDemands = await FeeDemand.find({
+        student: student._id,
+        status: { $in: ['Unpaid', 'Partial'] },
+    }).session(mongoSession).lean();
+
+    for (const d of feeDemands) {
+        const due = round2(Math.max(0, (d.amount || 0) - (d.discount || 0) - (d.paidAmount || 0)));
+        if (due <= 0) continue;
+
+        const next = { ...d, discount: round2((d.discount || 0) + due) };
+        const nextReason = d.discountReason
+            ? `${d.discountReason} · ${REASON}`.slice(0, 500)
+            : REASON;
+        const paid = round2((next.paidAmount || 0));
+        const newStatus = paid >= round2((next.amount || 0) - (next.discount || 0))
+            ? 'Paid'
+            : paid > 0 ? 'Partial' : 'Unpaid';
+
+        await FeeDemand.updateOne(
+            { _id: d._id },
+            {
+                $inc: { discount: due },
+                $set: { status: newStatus, discountReason: nextReason },
+            },
+            { session: mongoSession }
+        );
+
+        await ledger.bumpRollup(
+            {
+                session: d.session,
+                month: d.month,
+                classId: d.class,
+                className: d.className,
+                fields: { feeDiscount: due },
+            },
+            mongoSession
+        );
+
+        totalCleared = round2(totalCleared + due);
+    }
+
+    // ---- charge demands ----
+    const chargeDemands = await ChargeDemand.find({
+        student: student._id,
+        status: { $in: ['Unpaid', 'Partial'] },
+    }).session(mongoSession).lean();
+
+    for (const d of chargeDemands) {
+        const due = round2(Math.max(0, (d.amount || 0) - (d.discount || 0) - (d.paidAmount || 0)));
+        if (due <= 0) continue;
+
+        const next = { ...d, discount: round2((d.discount || 0) + due) };
+        const nextReason = d.discountReason
+            ? `${d.discountReason} · ${REASON}`.slice(0, 500)
+            : REASON;
+        const paid = round2((next.paidAmount || 0));
+        const newStatus = paid >= round2((next.amount || 0) - (next.discount || 0))
+            ? 'Paid'
+            : paid > 0 ? 'Partial' : 'Unpaid';
+
+        await ChargeDemand.updateOne(
+            { _id: d._id },
+            {
+                $inc: { discount: due },
+                $set: { status: newStatus, discountReason: nextReason },
+            },
+            { session: mongoSession }
+        );
+
+        await Charge.updateOne(
+            { _id: d.charge },
+            { $inc: { totalDiscount: due } },
+            { session: mongoSession }
+        );
+
+        totalCleared = round2(totalCleared + due);
+    }
+
+    // ---- stock outstanding ----
+    const stockDue = round2(student.stockOutstanding || 0);
+    if (stockDue > 0) totalCleared = round2(totalCleared + stockDue);
+
+    // Zero out all three balances on the student in one write
+    await Student.updateOne(
+        { _id: student._id },
+        {
+            $set: {
+                feeOutstanding: 0,
+                chargeOutstanding: 0,
+                stockOutstanding: 0,
+            },
+        },
+        { session: mongoSession }
+    );
+
+    return totalCleared;
 };
 
 // Defaulters — no aggregation, just an indexed read

@@ -240,7 +240,9 @@ const updateStudent = asyncHandler(async (req, res) => {
 // waiting for it.
 const leavingSummary = (data) =>
     [
-        `₹${data.outstandingCarried} still outstanding`,
+        data.outstandingCleared > 0
+            ? `₹${data.outstandingCleared} outstanding cleared`
+            : `₹${data.outstandingCarried} still outstanding`,
         data.creditHeld > 0 ? `₹${data.creditHeld} still held in advance` : null,
     ]
         .filter(Boolean)

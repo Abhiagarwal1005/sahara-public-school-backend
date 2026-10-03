@@ -115,6 +115,7 @@ const cancelIdCardSchema = z.object({ reason });
 const markLeftSchema = z.object({
     reason: z.string().trim().max(300).optional().or(z.literal('')),
     leftAt: dateish.optional(),
+    clearOutstanding: z.boolean().optional(),
 });
 
 // `issueAnyway` is the override for unpaid dues or an advance still held. It is
